@@ -1,13 +1,40 @@
 # Curated channels, grouped by topic. Topic names here are the only topics the LLM may assign.
-# Add real channel IDs (they start with "UC"). Find one on a channel page via
-# "Share channel" -> "Copy channel ID", or run `python -m shorts_digest discover-channels "<query>"`.
-#
-# Example:
-#   ai_llm:
-#     - id: UC...
-#       name: Some Channel
+# IDs were resolved from each channel's @handle with the YouTube API (channels.list?forHandle)
+# and checked against the channel title. To add one: channel page -> "Share channel" ->
+# "Copy channel ID" (starts with "UC").
 topics:
-  ai_llm: []
-  data_engineering: []
-  python: []
-  cloud_devops: []
+  python:
+    - {id: UCuudpdbKmQWq2PPzYgVCWlA, name: Indently}
+    - {id: UCTrAO0TDCldnYUN3BkLmGcw, name: b001}
+    - {id: UC4JX40jDee_tINbkjycV4Sg, name: Tech With Tim}
+  web_dev:
+    - {id: UCsBjURrPoezykLs9EqgamOA, name: Fireship}
+    - {id: UCWI-ohtRu8eEeDj93hmUsUQ, name: Coding with Lewis}
+    - {id: UCFbNIlppjAuEX4znoulh0Cw, name: Web Dev Simplified}
+    - {id: UCs5Y5_7XK8HLDX0SLNwkd3w, name: Visual Studio Code}
+    - {id: UC7c3Kb6jYCRj4JOHHZTxKsQ, name: GitHub}
+  data_engineering:
+    - {id: UCAq9f7jFEA7Mtl3qOZy2h1A, name: DataExpert (Data with Zach)}
+    - {id: UCChmJrVa8kDg05JfCmxpLRw, name: Darshil Parmar}
+    - {id: UCmLGJ3VYBcfRaWbP6JLJcpA, name: Seattle Data Guy}
+    - {id: UC7cs8q-gJRlGwj4A8OmCmXg, name: Alex The Analyst}
+    - {id: UCxladMszXan-jfgzyeIMyvw, name: Rob Mulla}
+    - {id: UCu9fxVjTz5AJO7FR1upY02w, name: Rajistics}
+  ai_llm:
+    - {id: UChpleBmo18P08aKCIgti38g, name: Matt Wolfe}
+    - {id: UCHhYXsLBEVVnbvsq57n1MTQ, name: The AI Advantage}
+    - {id: UCwSozl89jl2zUDzQ4jGJD3g, name: Skill Leap AI}
+    - {id: UCKWaEZ-_VweaEx1j62do_vQ, name: IBM Technology}
+    - {id: UC_x5XG1OV2P6uZZ5FSM9Ttw, name: Google for Developers}
+  cloud_devops:
+    - {id: UCdngmbVKX1Tgre699-XLlUA, name: TechWorld with Nana}
+    - {id: UC9x0AN7BWHpCDHSm9NiJFJQ, name: NetworkChuck}
+    - {id: UCP7WmQ_U4GB3K51Od9QvM0w, name: David Bombal}
+    - {id: UCZgt6AzoyjslHTC9dz0UoTw, name: ByteByteGo}
+    - {id: UCck1m7zZdzioiUzqhzpdNPw, name: Tech With Lucy}
+  productivity:
+    - {id: UCwAnu01qlnVg1Ai2AbtTMaA, name: Jeff Su}
+    - {id: UCfJT_eYDTmDE-ovKaxVE1ig, name: Kevin Stratvert}
+    - {id: UCJtUOos_MwJa_Ewii-R3cJA, name: Leila Gharani}
+    - {id: UCE0y3-Ku9lXdTDX518nWZPw, name: Excel Dictionary}
+    - {id: UC2dSE9W3lGYbFi_CPmVtA-A, name: Mike Tholfsen}
