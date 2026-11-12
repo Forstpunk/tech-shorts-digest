@@ -47,7 +47,9 @@ topics:
                fine-tuning, embeddings, vector database, context window, token, hallucination,
                mcp, model context protocol, system prompt, few-shot, chain of thought,
                observability, evaluation, multimodal]
-    advanced: [lora, quantization, transformer, attention, reinforcement learning, distillation]
+    # ("attention" left out on purpose: as a plain English word it matched non-AI Shorts)
+    advanced: [lora, quantization, transformer, attention mechanism, reinforcement learning,
+               distillation]
 
   cloud_devops:
     tools: [aws, azure, gcp, google cloud, kubernetes, docker, terraform, ansible, jenkins,

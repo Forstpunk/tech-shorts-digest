@@ -146,3 +146,11 @@ def test_extract_stage_stores_results_and_is_idempotent(tmp_path, vocab):
     row = conn.execute("SELECT * FROM extractions JOIN videos USING (video_id)").fetchone()
     assert row["status"] == "extracted" and row["model"] == "rules" and "specific" in row["reasons"]
     assert extract_stage(conn, TOPICS, vocab=vocab).processed == 0
+
+
+def test_tidy_speech_removes_filler_and_stutters():
+    from shorts_digest.extract import tidy_speech
+
+    assert (
+        tidy_speech("um and we added uh these to the the repo") == "And we added these to the repo"
+    )

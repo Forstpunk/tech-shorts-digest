@@ -15,6 +15,9 @@ def no_real_env(monkeypatch, tmp_path):
     monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
     monkeypatch.setattr(cli, "load_config", lambda: load_config(env_file=tmp_path / "none.env"))
     monkeypatch.setattr(store, "DEFAULT_DB_PATH", tmp_path / "test.db")  # never the real DB
+    import shorts_digest.digest as digest
+
+    monkeypatch.setattr(digest, "DEFAULT_OUTPUT_DIR", tmp_path / "output")  # never real output/
 
 
 def test_help_exits_cleanly(capsys):
@@ -26,10 +29,16 @@ def test_help_exits_cleanly(capsys):
 
 @pytest.mark.parametrize(
     "argv",
-    [["extract"], ["digest", "--days", "7"], ["discover-channels", "data engineering"]],
+    [["extract"], ["text"], ["digest", "--days", "7"], ["discover-channels", "data engineering"]],
 )
-def test_stub_commands_exit_zero(argv):
+def test_commands_exit_zero_on_empty_db(argv):
     assert main(argv) == 0
+
+
+def test_digest_command_writes_files_to_output_dir(tmp_path):
+    assert main(["digest"]) == 0
+    files = sorted(p.suffix for p in (tmp_path / "output").iterdir())
+    assert files == [".csv", ".md"]
 
 
 def test_fetch_stops_when_channels_empty(caplog, monkeypatch, tmp_path):

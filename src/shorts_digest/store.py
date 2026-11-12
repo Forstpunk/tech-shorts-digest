@@ -20,8 +20,10 @@ DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "digest.db"
 # Video lifecycle (videos.status):
 #   new               -> a Short, waiting for transcript (phase 3)
 #   text_ready        -> has text, waiting for extraction (phase 4)
-#   extracted         -> extraction stored
-#   rejected          -> dropped; see reject_reason (e.g. "not_short", "low_usefulness")
+#   extracted         -> extraction stored, waiting for the filter (phase 5)
+#   accepted          -> passed the filter; eligible for a digest
+#   rejected          -> dropped; see reject_reason ("not_short", "low_usefulness",
+#                        "promotional", "duplicate_concept")
 #   extraction_failed -> extractor raised on this item
 MIGRATIONS: list[str] = [
     # 1: initial schema (CLAUDE.md section 8) + status / reject_reason on videos
@@ -331,3 +333,83 @@ def save_extraction(
             ),
         )
         conn.execute("UPDATE videos SET status = 'extracted' WHERE video_id = ?", (video_id,))
+
+
+# --- filter + digest ---------------------------------------------------------------
+
+
+def videos_to_filter(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Extracted, not yet filtered. Best first, so a duplicate keeps the better copy."""
+    return conn.execute(
+        """
+        SELECT v.video_id, e.concept, e.usefulness, e.is_promotional
+        FROM videos v JOIN extractions e USING (video_id)
+        WHERE v.status = 'extracted'
+        ORDER BY e.usefulness DESC, v.published_at DESC
+        """
+    ).fetchall()
+
+
+def accepted_concepts_since(conn: sqlite3.Connection, since: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT e.concept FROM extractions e JOIN videos v USING (video_id)
+        WHERE v.status = 'accepted' AND e.created_at >= ?
+        """,
+        (since,),
+    )
+    return [r["concept"] for r in rows]
+
+
+def set_status(
+    conn: sqlite3.Connection, video_id: str, status: str, reason: str | None = None
+) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE videos SET status = ?, reject_reason = ? WHERE video_id = ?",
+            (status, reason, video_id),
+        )
+
+
+_NOT_DIGESTED = "AND v.video_id NOT IN (SELECT video_id FROM digest_items)"
+
+
+def digest_candidates(
+    conn: sqlite3.Connection, since: str, exclude_digested: bool
+) -> list[sqlite3.Row]:
+    """Accepted Shorts published since ``since`` with everything the digest shows."""
+    return conn.execute(
+        f"""
+        SELECT v.video_id, e.topic, e.concept, e.summary, e.method_or_tool, e.difficulty,
+               e.usefulness, e.confidence, e.next_step, v.url, c.title AS channel,
+               v.published_at, v.text_source
+        FROM videos v JOIN extractions e USING (video_id) JOIN channels c USING (channel_id)
+        WHERE v.status = 'accepted' AND v.published_at >= ?
+        {_NOT_DIGESTED if exclude_digested else ""}
+        """,
+        (since,),
+    ).fetchall()
+
+
+def shorts_pool_counts(
+    conn: sqlite3.Connection, since: str, exclude_digested: bool
+) -> tuple[int, int]:
+    """(number of Shorts, number of channels) published since ``since``: the digest header."""
+    row = conn.execute(
+        f"""
+        SELECT count(*) AS n, count(DISTINCT v.channel_id) AS ch FROM videos v
+        WHERE v.is_short = 1 AND v.published_at >= ?
+        {_NOT_DIGESTED if exclude_digested else ""}
+        """,
+        (since,),
+    ).fetchone()
+    return row["n"], row["ch"]
+
+
+def record_digest(conn: sqlite3.Connection, run_id: int, ranked: list[tuple[str, int]]) -> None:
+    """Remember which videos went out in which run, so they are never sent twice."""
+    with conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO digest_items (run_id, video_id, rank) VALUES (?, ?, ?)",
+            [(run_id, vid, rank) for vid, rank in ranked],
+        )

@@ -1,5 +1,5 @@
 {
-  "_about": "10 real outputs of the rule-based extractor (rules-v1) on Shorts fetched 2026-11-12. Review: fill owner_score (1-5) and owner_notes. Transcripts are not stored here; open the url to check.",
+  "_about": "10 real outputs of the rule-based extractor (rules-v2) on Shorts fetched 2026-11-12. Review: fill owner_score (1-5) and owner_notes. Transcripts are not stored here; open the url to check.",
   "items": [
     {
       "video_id": "Zk-OhFnJjKk",
@@ -25,7 +25,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -53,7 +53,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -80,7 +80,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -107,7 +107,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -133,7 +133,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -148,18 +148,18 @@
         "method_or_tool": "github, copilot",
         "topic": "web_dev",
         "summary": "And then he said, why not use GitHub Copilot?",
-        "difficulty": "advanced",
+        "difficulty": "intermediate",
         "usefulness": 3,
         "confidence": "high",
         "next_step": "Search: \"github prompt tutorial\"",
         "is_promotional": false,
         "reasons": [
-          "mentions: github, copilot, prompt, attention",
+          "mentions: github, copilot, prompt",
           "instructional language x9"
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -186,7 +186,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -213,7 +213,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -239,7 +239,7 @@
         ]
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     },
@@ -262,7 +262,7 @@
         "reasons": []
       },
       "model": "rules",
-      "version": "rules-v1",
+      "version": "rules-v2",
       "owner_score": null,
       "owner_notes": ""
     }

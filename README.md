@@ -5,8 +5,8 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, pulls
 each one teaches with a transparent rule-based extractor (no LLM, no AI API keys), filters out ads
 and fluff, and produces a 5–10 item "what to learn next" digest with links.
 
-> **Status:** Phase 4 of 8 — discovery, transcripts and concept extraction work. The digest
-> (filtering, ranking, Markdown/CSV) comes next.
+> **Status:** Phase 5 of 8 — the full pipeline runs end to end and writes a daily digest
+> (`output/digest-YYYY-MM-DD.md` + `.csv`). Next: reliability, then GitHub Actions.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -47,8 +47,8 @@ pytest -q
 ruff check . && ruff format .
 ```
 
-`fetch`, `text`, `extract` and `run` (which currently stops after extraction) are live; `digest` and
-`discover-channels` are stubs.
+All commands are live except `discover-channels` (not needed: channel IDs are already resolved).
+`run` = fetch → text → extract → filter → digest.
 
 ## Quota
 
@@ -91,13 +91,34 @@ so wrong scores can be fixed by editing `config/terms.yaml`. First run on 23 rea
 the two Excel shortcut tutorials scored 5, while robot/air-taxi clips and a career-opinion Short
 scored 1. Ten reviewed samples live in `tests/fixtures/extractions_sample.json`.
 
+## Filtering and the digest
+
+- **Filter**: items below `min_usefulness` (3), promotional items, and repeats of a concept
+  accepted in the last 30 days are rejected with a reason (`low_usefulness`, `promotional`,
+  `duplicate_concept`). Repeats are found with `difflib`: similar characters *and* mostly the
+  same words, so "Python decorators" and "Python generators" stay distinct.
+- **Rank**: usefulness, then confidence, then items with a real transcript, then newest.
+- **Select**: up to `digest_size` (8) items, at most `max_per_topic` (3) per topic.
+- **Never twice**: `run` records what it sent in `digest_items`; `digest --days N` rebuilds a
+  digest from stored data without marking anything as sent.
+
+Example item from the first real digest (12 Nov 2026, 8 picked from 23 Shorts across 10 channels):
+
+```markdown
+## Productivity
+1. **5 Excel Keyboard Shortcuts Every User Should Know** — Alt H O I to autofit your columns.
+   Tool/method: excel, Alt + equals · Level: intermediate · Score: 5/5
+   Next step: Search: "excel autofit tutorial"
+   https://www.youtube.com/shorts/f4HJf7w2ci4 — Excel Dictionary
+```
+
 ## Roadmap
 
 1. ✅ Skeleton — layout, config validation, CLI, tests
 2. ✅ Discovery — channels → new videos → Shorts, stored in SQLite
 3. ✅ Transcripts with fallback to title + description
 4. ✅ Concept extraction (rule-based, no LLM)
-5. Dedup, ranking, Markdown/CSV digest
+5. ✅ Dedup, ranking, Markdown/CSV digest
 6. Reliability — retries, resume, quota logging
 7. Daily GitHub Actions run + email
 8. Evaluation against 30 hand-scored Shorts

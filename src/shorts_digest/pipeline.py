@@ -3,6 +3,7 @@
 Phase 2: fetch stage (discover new uploads, classify Shorts, store everything).
 Phase 3: text stage (transcript, or title + description as a fallback).
 Phase 4: extract stage (rule-based concept extraction, no LLM).
+Phase 5: filter stage (score, promo, concept dedup) and digest stage (rank, render).
 """
 
 from __future__ import annotations
@@ -228,3 +229,72 @@ def extract_stage(
         result.processed += 1
         result.by_score[item.usefulness] = result.by_score.get(item.usefulness, 0) + 1
     return result
+
+
+# --- filter stage ------------------------------------------------------------------
+
+DEDUP_WINDOW_DAYS = 30
+
+
+@dataclass
+class FilterResult:
+    accepted: int = 0
+    rejected: dict[str, int] | None = None
+
+
+def filter_stage(
+    conn: sqlite3.Connection, min_usefulness: int, now: datetime | None = None
+) -> FilterResult:
+    """Accept or reject every extracted item, recording the reason."""
+    from shorts_digest.dedupe import find_duplicate
+
+    now = now or datetime.now(UTC)
+    since = (now - timedelta(days=DEDUP_WINDOW_DAYS)).isoformat(timespec="seconds")
+    seen = store.accepted_concepts_since(conn, since)
+    result = FilterResult(rejected={})
+
+    for row in store.videos_to_filter(conn):
+        if row["usefulness"] < min_usefulness:
+            reason = "low_usefulness"
+        elif row["is_promotional"]:
+            reason = "promotional"
+        elif find_duplicate(row["concept"], seen):
+            reason = "duplicate_concept"
+        else:
+            reason = None
+
+        if reason:
+            store.set_status(conn, row["video_id"], "rejected", reason)
+            result.rejected[reason] = result.rejected.get(reason, 0) + 1
+        else:
+            store.set_status(conn, row["video_id"], "accepted")
+            seen.append(row["concept"])
+            result.accepted += 1
+    return result
+
+
+# --- digest stage ------------------------------------------------------------------
+
+RUN_DIGEST_WINDOW_DAYS = 7  # a daily run looks at the last week of not-yet-sent items
+
+
+def build_digest(
+    conn: sqlite3.Connection,
+    digest_size: int,
+    max_per_topic: int,
+    days: int,
+    exclude_digested: bool,
+    now: datetime | None = None,
+):
+    """Select and rank items. ``exclude_digested`` = skip anything already sent in a digest."""
+    from shorts_digest.digest import Digest, DigestItem, select
+
+    now = now or datetime.now(UTC)
+    # published_at is stored as e.g. "2026-11-11T10:00:00Z"; compare on the same format.
+    since = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    candidates = [
+        DigestItem(**dict(r)) for r in store.digest_candidates(conn, since, exclude_digested)
+    ]
+    n_shorts, n_channels = store.shorts_pool_counts(conn, since, exclude_digested)
+    picked = select(candidates, digest_size, max_per_topic)
+    return Digest(now.date(), picked, n_shorts, n_channels)

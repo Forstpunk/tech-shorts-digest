@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field
 
 from shorts_digest.config import PROJECT_ROOT, ConfigError
 
-EXTRACTOR_VERSION = "rules-v1"  # stored with each row; bump when the rules change
+# Stored with each row; bump when the rules change. v2: filler words removed from summaries.
+EXTRACTOR_VERSION = "rules-v2"
 DEFAULT_TERMS_PATH = PROJECT_ROOT / "config" / "terms.yaml"
 
 MAX_CONCEPT_WORDS = 10
@@ -138,7 +139,19 @@ def _count(patterns: list[re.Pattern], text: str) -> int:
     return sum(len(p.findall(text)) for p in patterns)
 
 
+# Spoken filler ("um", "uh") and stutters ("the the") make summaries hard to read.
+_FILLER_RE = re.compile(r"\b(?:um+|uh+|erm|uh-huh)\b,?\s*", re.IGNORECASE)
+_REPEAT_RE = re.compile(r"\b(\w+)(?:\s+\1\b)+", re.IGNORECASE)
+
+
+def tidy_speech(text: str) -> str:
+    text = _REPEAT_RE.sub(r"\1", _FILLER_RE.sub("", text))
+    text = " ".join(text.split())
+    return text[:1].upper() + text[1:]
+
+
 def _trim(sentence: str, max_words: int = MAX_SUMMARY_WORDS) -> str:
+    sentence = tidy_speech(sentence)
     words = sentence.split()
     return sentence if len(words) <= max_words else " ".join(words[:max_words]) + "…"
 
