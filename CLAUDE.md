@@ -16,7 +16,9 @@ The owner finds short-form feeds distracting. The point of this program is that 
 
 ### In scope (version 1)
 
-- YouTube Shorts only, from a curated channel list in `config/channels.yaml`
+- YouTube Shorts only, from two sources:
+  1. **Curated** channels the owner trusts, in `config/channels.yaml` (main digest section)
+  2. **Discovery** (added 2026-11-12): a capped daily keyword search for small, rising creators, including funny/skit ones, whose Shorts do unusually well for their channel size (section 6a). A discovery failure never stops the curated pipeline.
 - Official YouTube Data API v3 for discovery and metadata
 - Transcript extraction with a fallback to title and description
 - Rule-based extraction (no LLM, decided 2026-11-12) of: concept, method or tool shown, topic tag, usefulness score, one-line summary
@@ -24,6 +26,7 @@ The owner finds short-form feeds distracting. The point of this program is that 
 - Storage in SQLite
 - Digest output as Markdown and CSV, plus an optional email
 - Daily scheduled run on GitHub Actions
+- Promotion flow for discovered channels: candidate -> suggested -> approved | rejected | blocked. Only the owner approves, via CLI, after seeing the `channels.yaml` diff.
 
 ### Out of scope — do not build unless the owner asks
 
@@ -31,7 +34,9 @@ The owner finds short-form feeds distracting. The point of this program is that 
 - Any scraping of logged-in pages, use of the owner's cookies, or third-party scraper APIs
 - Downloading or storing video or audio files
 - A web UI or dashboard (possible later phase)
-- Keyword search across all of YouTube in the daily run (too expensive in quota, see section 6)
+- Uncapped keyword search, or `search.list` anywhere except the two places allowed in section 6
+- Adding any channel to the curated list without the owner's approval
+- Any LLM or LLM API key (owner's decision, 2026-11-12)
 
 ## 3. Tech stack
 
@@ -70,6 +75,9 @@ No LLM is used. If one is ever added (e.g. a local Ollama model behind a setting
 │   ├── cli.py               # entry point: `python -m shorts_digest ...`
 │   ├── config.py            # load and validate YAML + env
 │   ├── youtube.py           # channel -> uploads playlist -> new videos
+│   ├── quota.py             # per-day quota guard (costs, SQLite counter, limit)
+│   ├── discovery.py         # keyword search -> enrich -> filter -> outlier rank
+│   ├── channels.py          # promotion flow + resolve-channels
 │   ├── shorts.py            # decide whether a video is a Short
 │   ├── transcripts.py       # fetch transcript, fallback to description
 │   ├── extract.py           # rule-based extractor + pydantic schema
@@ -102,12 +110,24 @@ Each stage is a separate function that can be run and tested on its own. Stages 
 
 The default quota is 10,000 units a day. `search.list` costs 100 units; most read calls cost 1.
 
-- **Never call `search.list` in the daily pipeline.**
+- **`search.list` is allowed in exactly two places:** the discovery job (max 15 calls/day) and the `resolve-channels` helper (max 10 calls per run, each confirmed). Nowhere else.
+- **One quota guard** (`quota.py`) wraps every API call: it knows each method's cost, keeps a per-day counter in SQLite (quota resets at midnight Pacific), and refuses a call that would exceed `quota.daily_limit` (default 6,000). Curated reserves its share first; discovery spends what is left.
 - Resolve each channel once with `channels.list` (part `contentDetails`), cache the uploads playlist ID in SQLite.
 - List new uploads with `playlistItems.list` (1 unit per page, 50 items).
 - Fetch durations with `videos.list` using up to 50 IDs per call (1 unit).
-- Log estimated quota used at the end of every run.
-- A one-off `discover-channels` CLI command may use `search.list` to help the owner find channels, capped at 10 calls per invocation with a confirmation prompt.
+- Log quota used at the end of every run, split by curated and discovery.
+- `resolve-channels <file>` turns channel names (one per line, `config/channel_names.txt`) into IDs: `channels.list` with `forHandle` first (1 unit), a channel search only after confirmation, then shows the match (subscribers, URL) and writes to `channels.yaml` only after the owner confirms each one.
+
+## 6a. Discovery job
+
+All thresholds and keywords live in `config/settings.yaml` under `discovery:`.
+
+- **Search:** one `search.list` per keyword chosen for today: `part=snippet, type=video, videoDuration=short, maxResults=50, safeSearch=moderate`, `relevanceLanguage` from config, `publishedAfter = now - lookback_days` (default 7). `order` alternates `viewCount` / `date` across keywords. One page per keyword, never paginate. More keywords than the daily cap: rotate round-robin across days and persist the position. Log each search (keyword, order, result count, cost).
+- **Enrich:** `videos.list` (contentDetails, statistics, snippet) and `channels.list` (statistics, snippet) in batches of 50; cache channel stats for 7 days.
+- **Filter** (store a drop reason for every candidate, never discard silently): not a Short; channel already curated; channel rejected/blocked; subscribers hidden or outside 1,000-100,000; fewer than 5 uploads; views < 5,000; views/subscribers < 2.0; title near-duplicate of a stored video from another channel (likely repost, keep the earliest).
+- **Rank and cap:** `outlier_score = views / max(subscribers, 1)`; at most one video per channel per day; at most 20 candidates per day go to extraction.
+- **Promotion:** a channel becomes `suggested` after 3 Shorts at or above `min_usefulness` within 30 days. Rejected channels are never suggested again; blocked channels are dropped at the filter step. A pending suggestion appears in the digest at most once a week.
+- Starting keywords: python trick, python tips, sql tip, excel hack, ai tool tutorial, chatgpt prompt tip, linux command, git tip, data engineering explained, vscode shortcut, coding humor, programmer skit.
 
 **Detecting Shorts.** The API has no "is Short" flag. Use:
 
@@ -128,6 +148,8 @@ class ConceptExtraction(BaseModel):
     summary: str            # one sentence, plain language
     difficulty: Literal["beginner", "intermediate", "advanced"]
     usefulness: int         # 1-5, see rubric
+    style: Literal["serious", "funny", "skit"]
+    has_takeaway: bool      # False when the joke is the whole content
     is_promotional: bool    # mostly an ad, course pitch or engagement bait
     confidence: Literal["low", "medium", "high"]
     next_step: str | None   # what to search or read to actually learn it
@@ -146,6 +168,7 @@ class ConceptExtraction(BaseModel):
 - If the text is too thin to judge (< 25 words), `confidence = "low"` and `usefulness <= 2`.
 - Never invent details: the summary is an actual sentence from the transcript (extractive).
 - Every score carries human-readable `reasons`; tune `config/terms.yaml` rather than hardcoding words.
+- Score the content, not the tone: a funny Short with a real takeaway can score 4-5. If the joke is the whole content, `has_takeaway = false` and `usefulness <= 2`. For skits, `concept` is the thing being joked about. `style` comes from signal phrases in `terms.yaml` (rough by nature).
 - An exception on one item marks it `extraction_failed` and the run continues.
 - Each video is extracted once (status moves `text_ready` -> `extracted`); bump `EXTRACTOR_VERSION` when rules change.
 
@@ -161,6 +184,12 @@ extractions(video_id PK, concept, method_or_tool, topic, summary, difficulty,
 runs(run_id PK, started_at, finished_at, status, videos_found,
      shorts_kept, quota_estimate, error)
 digest_items(run_id, video_id, rank)
+quota_usage(day, source, method, calls, units)      -- source: curated | discovery | resolve
+discovered_channels(channel_id PK, title, subscribers, video_count, stats_fetched_at,
+       status, topic, status_changed_at, last_suggested_at)
+discovery_candidates(video_id PK, channel_id, keyword, views, subscribers,
+       outlier_score, drop_reason, found_at)
+discovery_state(key PK, value)                     -- e.g. keyword rotation position
 ```
 
 Schema changes go through a small numbered migration list in `store.py`. Do not drop or recreate tables that hold data.
@@ -193,6 +222,21 @@ verify_shorts_url: false
 min_usefulness: 3
 digest_size: 8
 max_per_topic: 3
+quota:
+  daily_limit: 6000
+  curated_reserve: 500
+discovery:
+  enabled: true
+  max_searches_per_day: 15
+  lookback_days: 7
+  relevance_language: en
+  min_subscribers: 1000
+  max_subscribers: 100000
+  min_uploads: 5
+  min_views: 5000
+  min_views_per_subscriber: 2.0
+  max_candidates_per_day: 20
+  keywords: [python trick, python tips, ...]
 email:
   enabled: false
 ```
@@ -221,7 +265,14 @@ python -m shorts_digest fetch                # discovery + classify only
 python -m shorts_digest text                 # transcripts for stored Shorts
 python -m shorts_digest extract              # rule-based extraction on stored Shorts
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
-python -m shorts_digest discover-channels "data engineering"   # one-off helper
+python -m shorts_digest run --no-discovery     # curated only
+python -m shorts_digest discover [--dry-run]    # discovery job only
+python -m shorts_digest channels review         # pending suggestions
+python -m shorts_digest channels approve <id> --topic <topic>   # shows the channels.yaml diff first
+python -m shorts_digest channels reject <id>
+python -m shorts_digest channels block <id>
+python -m shorts_digest resolve-channels config/channel_names.txt
+python -m shorts_digest quota                   # today's usage by source
 
 pytest -q
 ruff check . && ruff format .
@@ -241,6 +292,11 @@ ruff check . && ruff format .
    Next step: <next_step>
    <url> — <channel>
 ```
+
+Two extra sections, omitted when empty:
+
+- **New voices:** up to 3 discovery items with subscriber count, view count, the keyword that found them, and a `[funny]` / `[skit]` tag. They never take slots from the main section.
+- **Channels to consider adding:** pending suggestions with the exact `channels approve` command.
 
 Also write the same rows to `output/digest-YYYY-MM-DD.csv`. Keep the digest short; a long digest defeats the purpose of the project.
 
@@ -263,9 +319,12 @@ Work in these phases. Finish and verify each one before starting the next, and c
 3. **Text** — transcripts with fallback.
 4. **Extraction** — rule-based extractor, schema, `config/terms.yaml`. Save 10 real outputs to `tests/fixtures/` for the owner to review.
 5. **Filter and digest** — dedup, ranking, Markdown and CSV.
-6. **Reliability** — retries, resume after failure, quota logging.
-7. **Automation** — GitHub Actions and email.
-8. **Evaluation** — a labelled set of 30 Shorts in `tests/eval/` scored by the owner, and a script that reports how often the model's usefulness score is within 1 of the owner's. Put the result in the README.
+6. **Quota guard + reliability** — `quota.py` with the per-day SQLite counter and limit, retries, resume after failure, one summary line per run, `quota` command.
+7. **resolve-channels** helper.
+8. **Discovery part 1** — search, enrich, filter, outlier score, `discover --dry-run`. Show the owner kept and dropped candidates with reasons before continuing.
+9. **Discovery part 2** — extraction of candidates (`style`, `has_takeaway`), "New voices", promotion flow and `channels` commands.
+10. **Automation** — GitHub Actions and email.
+11. **Evaluation** — 30 Shorts scored by the owner (at least 10 from discovery, including funny ones) in `tests/eval/`, and a script that reports how often the extractor's usefulness score is within 1 of the owner's. Put the result in the README.
 
 ## 14. Working rules for Claude Code
 
