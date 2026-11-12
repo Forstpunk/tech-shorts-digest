@@ -1,6 +1,7 @@
 """Pipeline stages, wired together. Each stage reads/writes SQLite so a failed run can resume.
 
-Phase 2: the fetch stage (discover new uploads, classify Shorts, store everything).
+Phase 2: fetch stage (discover new uploads, classify Shorts, store everything).
+Phase 3: text stage (transcript, or title + description as a fallback).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from googleapiclient.errors import HttpError
 from shorts_digest import store
 from shorts_digest.config import AppConfig
 from shorts_digest.shorts import check_shorts_url, is_short_by_duration, parse_duration
+from shorts_digest.transcripts import TextResult, Throttle, fetch_text
 from shorts_digest.youtube import (
     PlaylistItem,
     QuotaTracker,
@@ -134,4 +136,58 @@ def fetch_stage(
         )
     store.insert_videos(conn, rows)
     result.shorts_kept = sum(r.is_short for r in rows)
+    return result
+
+
+# --- text stage --------------------------------------------------------------------
+
+TRANSCRIPT_INTERVAL = 1.0  # seconds between transcript requests
+MAX_CONSECUTIVE_BLOCKS = 3  # after this, assume our IP is blocked and stop asking
+
+
+@dataclass
+class TextStageResult:
+    processed: int = 0
+    transcripts: int = 0
+    metadata: int = 0
+    blocked: bool = False
+    errors: dict[str, int] | None = None
+
+
+def text_stage(
+    conn: sqlite3.Connection,
+    limit: int | None = None,
+    api: Any | None = None,
+    interval: float = TRANSCRIPT_INTERVAL,
+) -> TextStageResult:
+    """Give every new Short some text. Never fails because of a transcript problem."""
+    result = TextStageResult(errors={})
+    throttle = Throttle(interval)
+    consecutive_blocks = 0
+
+    for row in store.videos_needing_text(conn, limit):
+        if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
+            # Keep going with metadata only; hammering a blocked endpoint won't help.
+            text = TextResult("metadata", None, error="skipped_ip_blocked")
+        else:
+            throttle.wait()
+            text = fetch_text(row["video_id"], api)
+            consecutive_blocks = consecutive_blocks + 1 if text.blocked else 0
+            if consecutive_blocks == MAX_CONSECUTIVE_BLOCKS:
+                result.blocked = True
+                log.warning(
+                    "Transcript requests look blocked (common on cloud IPs); "
+                    "using title + description for the rest of this run."
+                )
+
+        store.save_text(
+            conn, row["video_id"], text.text_source, text.transcript, text.language, text.error
+        )
+        result.processed += 1
+        if text.text_source == "transcript":
+            result.transcripts += 1
+        else:
+            result.metadata += 1
+            reason = text.error or "unknown"
+            result.errors[reason] = result.errors.get(reason, 0) + 1
     return result

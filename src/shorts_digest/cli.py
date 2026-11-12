@@ -58,21 +58,41 @@ def _fetch(cfg: AppConfig, command: str, limit: int | None) -> int:
     return 0
 
 
+def _text(limit: int | None) -> int:
+    from shorts_digest.pipeline import text_stage
+
+    conn = store.connect()
+    r = text_stage(conn, limit)
+    log.info(
+        "Text stage: processed=%d transcript=%d metadata=%d reasons=%s",
+        r.processed,
+        r.transcripts,
+        r.metadata,
+        r.errors,
+    )
+    return 0
+
+
 def _not_implemented(stage: str, phase: int) -> int:
     log.info("'%s' is not implemented yet (planned for phase %d).", stage, phase)
     return 0
 
 
 def cmd_run(cfg: AppConfig, args: argparse.Namespace) -> int:
-    # Phase 2: only the fetch stage exists. Later phases add text, LLM and digest stages.
+    # Phases 2-3 exist so far. Later phases add the LLM and digest stages.
     code = _fetch(cfg, "run", args.limit)
     if code == 0:
-        log.info("Stages after fetch are not implemented yet (phases 3-5).")
+        code = _text(args.limit)
+        log.info("Stages after text are not implemented yet (phases 4-5).")
     return code
 
 
 def cmd_fetch(cfg: AppConfig, args: argparse.Namespace) -> int:
     return _fetch(cfg, "fetch", args.limit)
+
+
+def cmd_text(cfg: AppConfig, args: argparse.Namespace) -> int:
+    return _text(args.limit)
 
 
 def cmd_extract(cfg: AppConfig, args: argparse.Namespace) -> int:
@@ -110,6 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("fetch", help="discovery + classify only")
     p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_fetch)
+
+    p = sub.add_parser("text", help="transcript (or title + description) for stored Shorts")
+    p.add_argument("--limit", type=_positive_int, help="process at most N videos")
+    p.set_defaults(func=cmd_text)
 
     p = sub.add_parser("extract", help="LLM stage on stored, unprocessed videos")
     p.add_argument("--limit", type=_positive_int, help="process at most N videos")

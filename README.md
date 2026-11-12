@@ -5,8 +5,8 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, uses 
 the one concept each Short teaches, filters out ads and fluff, and produces a 5–10 item
 "what to learn next" digest with links.
 
-> **Status:** Phase 2 of 8 — discovery works: new uploads from 29 channels are classified as
-> Shorts and stored in SQLite.
+> **Status:** Phase 3 of 8 — discovery and transcripts work: new Shorts from 29 channels are
+> found, given text (transcript, or title + description as a fallback) and stored in SQLite.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -38,6 +38,7 @@ Add channels to `config/channels.yaml` (real channel IDs start with `UC`). Tune 
 python -m shorts_digest run                  # full pipeline
 python -m shorts_digest run --dry-run        # no LLM calls, no email
 python -m shorts_digest fetch                # discovery + classify only
+python -m shorts_digest text                 # transcripts for stored Shorts
 python -m shorts_digest extract              # LLM stage on stored videos
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
 python -m shorts_digest discover-channels "data engineering"
@@ -46,7 +47,7 @@ pytest -q
 ruff check . && ruff format .
 ```
 
-`fetch` (and `run`, which currently stops after fetch) are live; the other commands are stubs.
+`fetch`, `text` and `run` (which currently stops after the text stage) are live; the others are stubs.
 
 ## Quota
 
@@ -62,11 +63,21 @@ ones (`status = rejected`, `reject_reason = not_short`), so nothing is fetched t
 run is recorded as `partial`, and the next run looks back from the last *complete* run, so
 skipped videos are not lost.
 
+## Transcripts
+
+Captions come from `youtube-transcript-api` (unofficial). Preference: English, then Hindi, then any
+auto-generated track; human captions beat auto-generated ones. If there is no usable transcript
+the item keeps going with title + description (`text_source = metadata`) and the reason is stored
+in `transcript_error`. After 3 blocked requests in a row the run stops asking and uses metadata
+for the rest — YouTube often blocks cloud IPs such as GitHub Actions runners.
+
+First local run: **22 of 23 Shorts had an English transcript**; one had captions disabled.
+
 ## Roadmap
 
 1. ✅ Skeleton — layout, config validation, CLI, tests
 2. ✅ Discovery — channels → new videos → Shorts, stored in SQLite
-3. Transcripts with fallback to title + description
+3. ✅ Transcripts with fallback to title + description
 4. LLM concept extraction
 5. Dedup, ranking, Markdown/CSV digest
 6. Reliability — retries, fallback provider, resume, quota logging

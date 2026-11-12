@@ -3,6 +3,7 @@ pydantic==2.14.3        # validates config now, LLM output later
 python-dotenv==1.2.4    # loads secrets from .env
 PyYAML==6.0.3           # reads config/*.yaml
 google-api-python-client==2.202.0  # official YouTube Data API v3 client (paging, errors, retries)
+youtube-transcript-api==1.2.5      # unofficial caption reader; wrapped so failures never stop a run
 
 # Dev
 pytest==9.2.0

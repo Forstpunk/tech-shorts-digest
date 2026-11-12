@@ -35,3 +35,19 @@ def test_last_successful_fetch_ignores_partial_and_failed(tmp_path):
         rid = store.start_run(conn, "fetch")
         store.finish_run(conn, rid, status)
     assert store.last_successful_fetch(conn) == first
+
+
+def test_migration_2_upgrades_existing_db_without_losing_data(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    raw = sqlite3.connect(db)
+    raw.executescript(store.MIGRATIONS[0] + "\nPRAGMA user_version = 1;")
+    raw.execute("INSERT INTO channels VALUES ('UCx', 't', 'python', NULL, 'now')")
+    raw.commit()
+    raw.close()
+
+    conn = store.connect(db)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(videos)")}
+    assert {"transcript_language", "transcript_error"} <= cols
+    assert conn.execute("SELECT count(*) FROM channels").fetchone()[0] == 1

@@ -82,6 +82,11 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (run_id, video_id)
     );
     """,
+    # 2: phase 3 - remember which caption language was used and why a transcript wasn't
+    """
+    ALTER TABLE videos ADD COLUMN transcript_language TEXT;
+    ALTER TABLE videos ADD COLUMN transcript_error TEXT;
+    """,
 ]
 
 
@@ -103,9 +108,9 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
 def migrate(conn: sqlite3.Connection) -> None:
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     for version, sql in enumerate(MIGRATIONS[current:], start=current + 1):
-        with conn:  # one transaction per migration
-            conn.executescript(sql)
-            conn.execute(f"PRAGMA user_version = {version}")
+        # executescript() commits on its own, so put BEGIN/COMMIT inside the script:
+        # the schema change and the version bump then succeed or fail together.
+        conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
 
 
 # --- channels ----------------------------------------------------------------------
@@ -242,3 +247,33 @@ def last_successful_fetch(conn: sqlite3.Connection) -> datetime | None:
         "ORDER BY run_id DESC LIMIT 1"
     ).fetchone()
     return datetime.fromisoformat(row["started_at"]) if row else None
+
+
+def videos_needing_text(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+    """Shorts discovered but not yet given text (status 'new'), newest first."""
+    sql = (
+        "SELECT video_id, title, description FROM videos "
+        "WHERE status = 'new' AND is_short = 1 ORDER BY published_at DESC"
+    )
+    if limit is not None:
+        sql += f" LIMIT {int(limit)}"
+    return conn.execute(sql).fetchall()
+
+
+def save_text(
+    conn: sqlite3.Connection,
+    video_id: str,
+    text_source: str,
+    transcript: str | None,
+    language: str | None,
+    error: str | None,
+) -> None:
+    with conn:
+        conn.execute(
+            """
+            UPDATE videos SET text_source = ?, transcript = ?, transcript_language = ?,
+                transcript_error = ?, status = 'text_ready'
+            WHERE video_id = ?
+            """,
+            (text_source, transcript, language, error, video_id),
+        )
