@@ -5,10 +5,9 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, pulls
 each one teaches with a transparent rule-based extractor (no LLM, no AI API keys), filters out ads
 and fluff, and produces a 5–10 item "what to learn next" digest with links.
 
-> **Status:** Phase 8 of 11 — the curated pipeline runs end to end with a quota guard,
-> retries and resume-after-failure, and writes a daily digest (`output/digest-YYYY-MM-DD.md`
-> + `.csv`). Discovery finds and ranks small, rising creators (`discover --dry-run`); next it
-> feeds a "New voices" digest section.
+> **Status:** Phase 9 of 11 — one `run` fetches curated channels, discovers small rising
+> creators, extracts and filters everything, and writes a digest with a main section,
+> "New voices" and channel suggestions you approve from the CLI. Next: GitHub Actions + email.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -46,16 +45,21 @@ python -m shorts_digest extract              # concept extraction on stored Shor
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
 python -m shorts_digest quota                # today's API quota use, by source and method
 python -m shorts_digest resolve-channels     # add channels by name (see below)
+python -m shorts_digest run --no-discovery   # curated channels only
 python -m shorts_digest discover --dry-run --max-searches 3   # preview discovery (see below)
+python -m shorts_digest channels review      # discovered channels suggested for your list
+python -m shorts_digest channels approve <id> --topic <topic>   # shows the diff first
+python -m shorts_digest channels reject <id> # never suggest again
+python -m shorts_digest channels block <id>  # also drop its Shorts from discovery
 
 pytest -q
 ruff check . && ruff format .
 ```
 
-`run` = fetch → text → extract → filter → digest, and ends with one summary line:
+`run` = fetch → discover → text → extract → filter → digest, and ends with one summary line:
 
 ```
-Run 4 success: found=0 kept=0 text=0 (transcript 0) extracted=0 accepted=0 rejected=0 digest=4 quota=29 units (curated 29, today 29/6000)
+Run 5 success: found=0 kept=0 discovered=0 (searches 3) text=0 (transcript 0) extracted=0 accepted=0 rejected=0 digest=0 (+0 new voices) quota=334 units (curated 29, discovery 305, today 1611/6000)
 ```
 
 ## Quota
@@ -123,6 +127,25 @@ unusually well for their size, using a capped keyword search (`discovery:` in se
    (< 5,000), `low_views_per_subscriber` (< 2.0), `likely_repost` (same title as an earlier
    video from another channel; the earliest copy survives).
 4. **Rank:** `outlier_score = views / subscribers`; one video per channel per day; at most 20.
+
+Kept candidates join the normal pipeline (`videos.source = 'discovery'`): transcript,
+extraction and filter. Extraction also judges **style** (`serious` / `funny` / `skit`, from
+phrases and hashtags in `config/terms.yaml`) and **has_takeaway**: humour is welcome, but if
+the joke is the whole content the Short is rejected as `no_takeaway`. For skits the concept
+names what is being joked about (e.g. "Debugging: Why fix the bug when you can hide it").
+
+The digest then has up to three sections (empty ones are left out):
+
+- **main** — curated channels, 8 items, at most 3 per topic;
+- **New voices** — up to 3 accepted discovery items, one per channel, with subscriber count,
+  views, the keyword that found them and a `[funny]` / `[skit]` tag; they never take main slots;
+- **Channels to consider adding** — a discovered channel becomes `suggested` after 3 accepted
+  Shorts in 30 days, and is listed (at most once a week) with the exact approve command.
+
+Only you promote channels: `channels approve` shows the `channels.yaml` diff and writes after
+a yes; `reject` means it is never suggested again; `block` also drops it from discovery and
+withdraws its unsent Shorts. Discovery failing never stops the curated run (the summary line
+shows `discovery=FAILED`), and `run --no-discovery` skips it.
 
 `discover --dry-run` makes the real calls (so it spends real quota and counts toward the
 daily search cap) but saves nothing and leaves the keyword rotation alone. Both modes print a
@@ -194,7 +217,7 @@ Example item from the first real digest (12 Nov 2026, 8 picked from 23 Shorts ac
 6. ✅ Quota guard + reliability — retries, resume, run summary, `quota` command
 7. ✅ `resolve-channels` — channel names → IDs, confirmed one by one
 8. ✅ Discovery part 1 — capped keyword search for small, rising creators (dry-run first)
-9. Discovery part 2 — "New voices" digest section, channel promotion flow
+9. ✅ Discovery part 2 — "New voices" digest section, channel promotion flow
 10. Daily GitHub Actions run + email
 11. Evaluation against 30 hand-scored Shorts
 

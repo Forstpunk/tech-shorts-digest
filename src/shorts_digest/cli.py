@@ -80,6 +80,8 @@ def _filter(cfg: AppConfig, conn: sqlite3.Connection):
 
     r = filter_stage(conn, cfg.settings.min_usefulness)
     log.info("Filter stage: accepted=%d rejected=%s", r.accepted, r.rejected)
+    for cid in r.suggested:
+        log.info("Discovered channel %s now suggested; see `channels review`", cid)
     return r
 
 
@@ -98,10 +100,13 @@ def _digest(cfg: AppConfig, conn: sqlite3.Connection, days: int, run_id: int | N
     # A recorded run never replaces an earlier digest from the same day; a rebuild may.
     md_path, csv_path = write_outputs(d, overwrite=run_id is None)
     if run_id is not None:
-        store.record_digest(conn, run_id, [(i.video_id, i.rank) for i in d.items])
+        store.record_digest(conn, run_id, [(i.video_id, i.rank) for i in d.items + d.new_voices])
+        store.mark_suggested_shown(conn, [sg.channel_id for sg in d.suggestions])
     log.info(
-        "Digest: %d items from %d Shorts -> %s, %s",
+        "Digest: %d items + %d new voices + %d channel suggestions from %d Shorts -> %s, %s",
         len(d.items),
+        len(d.new_voices),
+        len(d.suggestions),
         d.shorts_considered,
         md_path.relative_to(md_path.parents[1]),
         csv_path.name,
@@ -112,9 +117,13 @@ def _digest(cfg: AppConfig, conn: sqlite3.Connection, days: int, run_id: int | N
 # --- recorded runs -----------------------------------------------------------------
 
 
-def summary_line(run_id: int, status: str, s: dict, guard) -> str:
+def summary_line(run_id: int, status: str, s: dict, guard, discovery_guard=None) -> str:
     """The one line CLAUDE.md asks for: found, kept, extracted, rejected, quota."""
     parts = [f"found={s.get('found', 0)}", f"kept={s.get('kept', 0)}"]
+    if "discovered" in s:
+        parts.append(f"discovered={s['discovered']} (searches {s['searches']})")
+    if "discovery_error" in s:
+        parts.append("discovery=FAILED")
     if "text" in s:
         parts.append(f"text={s['text']} (transcript {s['transcripts']})")
     if "extracted" in s:
@@ -122,18 +131,43 @@ def summary_line(run_id: int, status: str, s: dict, guard) -> str:
     if "accepted" in s:
         parts.append(f"accepted={s['accepted']} rejected={s['rejected']}")
     if "digest" in s:
-        parts.append(f"digest={s['digest']}")
+        parts.append(f"digest={s['digest']} (+{s.get('new_voices', 0)} new voices)")
     if s.get("channels_failed"):
         parts.append(f"channels_failed={s['channels_failed']}")
+    d_units = discovery_guard.units if discovery_guard else 0
+    split = f"curated {guard.units}" + (f", discovery {d_units}" if discovery_guard else "")
     parts.append(
-        f"quota={guard.units} units ({guard.source} {guard.units}, "
+        f"quota={guard.units + d_units} units ({split}, "
         f"today {guard.used_today()}/{guard.daily_limit})"
     )
     return f"Run {run_id} {status}: " + " ".join(parts)
 
 
-def _recorded_run(cfg: AppConfig, command: str, limit: int | None) -> int:
-    """fetch [-> text -> extract -> filter -> digest], recorded in the runs table."""
+def _discover_in_run(cfg: AppConfig, conn: sqlite3.Connection, guard, s: dict) -> None:
+    """Discovery inside `run`. Never lets a failure stop the curated pipeline."""
+    from shorts_digest import digest as digest_mod
+    from shorts_digest import youtube
+    from shorts_digest.discovery import discover, write_report_csv
+
+    try:
+        client = youtube.build_client(cfg.env.get("YOUTUBE_API_KEY"))
+        r = discover(cfg, conn, client, guard)
+        write_report_csv(r, digest_mod.DEFAULT_OUTPUT_DIR, guard.day)
+        s.update(discovered=len(r.kept), searches=r.searches)
+        log.info(
+            "Discovery stage: searches=%d judged=%d kept=%d %s",
+            r.searches,
+            len(r.candidates),
+            len(r.kept),
+            r.drop_counts(),
+        )
+    except Exception as exc:  # fail soft: log it, record it in the run summary, carry on
+        s["discovery_error"] = f"{type(exc).__name__}: {exc}"
+        log.warning("Discovery failed, continuing with curated only: %s", exc)
+
+
+def _recorded_run(cfg: AppConfig, command: str, limit: int | None, discovery: bool = True) -> int:
+    """fetch [-> discover -> text -> extract -> filter -> digest], recorded in runs."""
     from shorts_digest.pipeline import RUN_DIGEST_WINDOW_DAYS
     from shorts_digest.quota import QuotaLimitError
     from shorts_digest.youtube import YouTubeFatalError
@@ -146,12 +180,17 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None) -> int:
         log.warning("Marked %d earlier run(s) as interrupted; carrying on from there", stale)
     run_id = store.start_run(conn, command)
     guard = _new_guard(cfg, conn)
+    d_guard = None
     s: dict = {}
     stage, complete = "fetch", True
     try:
         f = _fetch(cfg, conn, guard, limit)
         s.update(found=f.videos_found, kept=f.shorts_kept, channels_failed=f.channels_failed)
         complete = f.complete
+        if command == "run" and discovery and cfg.settings.discovery.enabled:
+            stage = "discover"
+            d_guard = _new_guard(cfg, conn, "discovery")
+            _discover_in_run(cfg, conn, d_guard, s)
         if command == "run":
             stage = "text"
             t = _text(conn, limit)
@@ -164,7 +203,7 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None) -> int:
             s.update(accepted=fl.accepted, rejected=sum(fl.rejected.values()))
             stage = "digest"
             d = _digest(cfg, conn, RUN_DIGEST_WINDOW_DAYS, run_id)
-            s["digest"] = len(d.items)
+            s.update(digest=len(d.items), new_voices=len(d.new_voices))
     except Exception as exc:
         # "Fail loud per run": write the failure to the runs table, then exit non-zero.
         store.finish_run(
@@ -173,7 +212,7 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None) -> int:
             "failed",
             videos_found=s.get("found", 0),
             shorts_kept=s.get("kept", 0),
-            quota_estimate=guard.units,
+            quota_estimate=guard.units + (d_guard.units if d_guard else 0),
             error=f"{type(exc).__name__}: {exc}",
             stage=stage,
             summary=s,
@@ -184,7 +223,8 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None) -> int:
             log.error("Daily quota limit reached: %s", exc)
         else:
             log.exception("Run %d crashed in the %s stage", run_id, stage)
-        log.error("%s (stopped in %s stage)", summary_line(run_id, "failed", s, guard), stage)
+        line = summary_line(run_id, "failed", s, guard, d_guard)
+        log.error("%s (stopped in %s stage)", line, stage)
         return 1
 
     # A --limit run is "partial": the next run looks back from the last *complete* run.
@@ -195,11 +235,20 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None) -> int:
         status,
         videos_found=s["found"],
         shorts_kept=s["kept"],
-        quota_estimate=guard.units,
+        quota_estimate=guard.units + (d_guard.units if d_guard else 0),
         summary=s,
     )
-    log.info("%s", summary_line(run_id, status, s, guard))
+    log.info("%s", summary_line(run_id, status, s, guard, d_guard))
     return 0
+
+
+def _discovery_plan(cfg: AppConfig, conn: sqlite3.Connection, guard) -> str:
+    d = cfg.settings.discovery
+    if not d.enabled:
+        return "off"
+    left = max(d.max_searches_per_day - store.searches_on(conn, guard.day), 0)
+    n = min(left, len(d.keywords))
+    return f"on, {n} searches left today (~{n * 100 + 2 * math.ceil(n / 2)} units)"
 
 
 def _dry_run(cfg: AppConfig) -> int:
@@ -228,6 +277,7 @@ def _dry_run(cfg: AppConfig) -> int:
         f"  stored videos:   {pending or 'none yet'}\n"
         f"  digest:          up to {cfg.settings.digest_size} items, "
         f"max {cfg.settings.max_per_topic} per topic\n"
+        f"  discovery:       {_discovery_plan(cfg, conn, guard)}\n"
         f"  email:           {'on' if cfg.settings.email.enabled else 'off'}\n"
         f"  YOUTUBE_API_KEY: {key}"
     )
@@ -240,7 +290,7 @@ def _dry_run(cfg: AppConfig) -> int:
 def cmd_run(cfg: AppConfig, args: argparse.Namespace) -> int:
     if args.dry_run:
         return _dry_run(cfg)
-    return _recorded_run(cfg, "run", args.limit)
+    return _recorded_run(cfg, "run", args.limit, discovery=not args.no_discovery)
 
 
 def cmd_fetch(cfg: AppConfig, args: argparse.Namespace) -> int:
@@ -320,6 +370,35 @@ def cmd_discover(cfg: AppConfig, args: argparse.Namespace) -> int:
         guard.used_today("discovery"),
         guard.used_today(),
         guard.daily_limit,
+    )
+    return 0
+
+
+def cmd_channels(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Review and decide on discovered channels (only the owner promotes channels)."""
+    from shorts_digest.channels import approve_channel, review_lines, set_owner_status
+    from shorts_digest.config import DEFAULT_CONFIG_DIR
+
+    conn = store.connect()
+    if args.action == "review":
+        print("\n".join(review_lines(store.channel_suggestions(conn))))
+        return 0
+    if args.action == "approve":
+        if not _interactive():
+            log.error("channels approve asks for confirmation, so run it in a terminal.")
+            return 2
+        approve_channel(
+            conn,
+            DEFAULT_CONFIG_DIR / "channels.yaml",
+            args.channel_id,
+            args.topic,
+            cfg.channels.topic_names,
+            _ask,
+            print,
+        )
+        return 0
+    set_owner_status(
+        conn, args.channel_id, {"reject": "rejected", "block": "blocked"}[args.action], print
     )
     return 0
 
@@ -405,6 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("run", help="full pipeline")
     p.add_argument("--dry-run", action="store_true", help="print the plan; no calls, no email")
     p.add_argument("--limit", type=_positive_int, help="process at most N videos")
+    p.add_argument("--no-discovery", action="store_true", help="curated channels only")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("fetch", help="find new uploads + classify Shorts only")
@@ -436,6 +516,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="examples per drop reason in the report (default 3; full list in the CSV)",
     )
     p.set_defaults(func=cmd_discover)
+
+    p = sub.add_parser("channels", help="review discovered channels and approve/reject/block")
+    ch_sub = p.add_subparsers(dest="action", required=True)
+    ch_sub.add_parser("review", help="list channels suggested for the curated list")
+    a = ch_sub.add_parser("approve", help="add a discovered channel to channels.yaml")
+    a.add_argument("channel_id")
+    a.add_argument("--topic", required=True, help="topic in channels.yaml to add it under")
+    for action, text in (
+        ("reject", "never suggest this channel again"),
+        ("block", "also drop its Shorts from discovery"),
+    ):
+        ch_sub.add_parser(action, help=text).add_argument("channel_id")
+    p.set_defaults(func=cmd_channels)
 
     p = sub.add_parser("quota", help="today's YouTube API quota use")
     p.set_defaults(func=cmd_quota)

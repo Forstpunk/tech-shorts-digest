@@ -161,7 +161,7 @@ def last_run():
 
 def test_run_writes_one_summary_line(cli_env, caplog):
     caplog.set_level("INFO")
-    assert cli.main(["run"]) == 0
+    assert cli.main(["run", "--no-discovery"]) == 0
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Run ")]
     assert len(lines) == 1
     assert "success: found=0 kept=0 text=0" in lines[0]
@@ -177,7 +177,7 @@ def test_crash_in_a_later_stage_is_recorded(cli_env, monkeypatch, caplog):
         raise RuntimeError("extractor exploded")
 
     monkeypatch.setattr("shorts_digest.pipeline.extract_stage", boom)
-    assert cli.main(["run"]) == 1
+    assert cli.main(["run", "--no-discovery"]) == 1
     row = last_run()
     assert (row["status"], row["stage"]) == ("failed", "extract")
     assert row["error"] == "RuntimeError: extractor exploded"
@@ -227,12 +227,12 @@ def test_resume_after_a_crash_finishes_the_leftover_videos(cli_env, monkeypatch)
         "shorts_digest.pipeline.text_stage",
         lambda *a, **k: (_ for _ in ()).throw(ConnectionError("wifi dropped")),
     )
-    assert cli.main(["run"]) == 1
+    assert cli.main(["run", "--no-discovery"]) == 1
     statuses = dict(store.connect().execute("SELECT video_id, status FROM videos").fetchall())
     assert statuses == {"s1": "new", "s2": "new"}  # fetched and saved before the crash
 
     monkeypatch.setattr("shorts_digest.pipeline.text_stage", real_text_stage)
-    assert cli.main(["run"]) == 0
+    assert cli.main(["run", "--no-discovery"]) == 0
     statuses = dict(store.connect().execute("SELECT video_id, status FROM videos").fetchall())
     assert set(statuses.values()) <= {"accepted", "rejected"}  # both made it to the end
     assert last_run()["status"] == "success"

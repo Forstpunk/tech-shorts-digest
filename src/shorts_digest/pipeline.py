@@ -238,12 +238,14 @@ def extract_stage(
 # --- filter stage ------------------------------------------------------------------
 
 DEDUP_WINDOW_DAYS = 30
+PROMOTION_THRESHOLD = 3  # useful Shorts within DEDUP_WINDOW_DAYS before suggesting a channel
 
 
 @dataclass
 class FilterResult:
     accepted: int = 0
     rejected: dict[str, int] | None = None
+    suggested: list[str] | None = None  # discovered channels newly suggested
 
 
 def filter_stage(
@@ -258,7 +260,9 @@ def filter_stage(
     result = FilterResult(rejected={})
 
     for row in store.videos_to_filter(conn):
-        if row["usefulness"] < min_usefulness:
+        if not row["has_takeaway"]:
+            reason = "no_takeaway"  # e.g. a skit where the joke is the whole content
+        elif row["usefulness"] < min_usefulness:
             reason = "low_usefulness"
         elif row["is_promotional"]:
             reason = "promotional"
@@ -274,12 +278,18 @@ def filter_stage(
             store.set_status(conn, row["video_id"], "accepted")
             seen.append(row["concept"])
             result.accepted += 1
+
+    # Discovered channels with enough useful Shorts become suggestions for the owner.
+    result.suggested = store.promote_channels(
+        conn, min_usefulness, since, needed=PROMOTION_THRESHOLD
+    )
     return result
 
 
 # --- digest stage ------------------------------------------------------------------
 
 RUN_DIGEST_WINDOW_DAYS = 7  # a daily run looks at the last week of not-yet-sent items
+SUGGESTION_REMINDER_DAYS = 7  # show a pending channel suggestion at most once a week
 
 
 def build_digest(
@@ -290,15 +300,45 @@ def build_digest(
     exclude_digested: bool,
     now: datetime | None = None,
 ):
-    """Select and rank items. ``exclude_digested`` = skip anything already sent in a digest."""
-    from shorts_digest.digest import Digest, DigestItem, select
+    """Select and rank items. ``exclude_digested`` = skip anything already sent in a digest.
+
+    A recorded run (``exclude_digested``) shows each suggestion at most once a week; a
+    rebuild shows every pending suggestion.
+    """
+    from shorts_digest.digest import (
+        NEW_VOICES_SIZE,
+        Digest,
+        DigestItem,
+        Suggestion,
+        select,
+        select_new_voices,
+    )
 
     now = now or datetime.now(UTC)
     # published_at is stored as e.g. "2026-11-11T10:00:00Z"; compare on the same format.
     since = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
-    candidates = [
+    curated = [
         DigestItem(**dict(r)) for r in store.digest_candidates(conn, since, exclude_digested)
     ]
     n_shorts, n_channels = store.shorts_pool_counts(conn, since, exclude_digested)
-    picked = select(candidates, digest_size, max_per_topic)
-    return Digest(now.date(), picked, n_shorts, n_channels)
+    picked = select(curated, digest_size, max_per_topic)
+    discovered = [
+        DigestItem(**dict(r))
+        for r in store.digest_candidates(conn, since, exclude_digested, source="discovery")
+    ]
+    voices = select_new_voices(discovered, NEW_VOICES_SIZE, start_rank=len(picked) + 1)
+    week_ago = (now - timedelta(days=SUGGESTION_REMINDER_DAYS)).isoformat(timespec="seconds")
+    suggestions = [
+        Suggestion(
+            r["channel_id"],
+            r["title"],
+            f"https://www.youtube.com/{r['handle']}"
+            if r["handle"]
+            else f"https://www.youtube.com/channel/{r['channel_id']}",
+            r["subscribers"],
+            r["accepted"],
+            r["topic"],
+        )
+        for r in store.channel_suggestions(conn, week_ago if exclude_digested else None)
+    ]
+    return Digest(now.date(), picked, n_shorts, n_channels, voices, suggestions)

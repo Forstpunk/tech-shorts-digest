@@ -94,6 +94,14 @@ signals:
   news: ["just released", "announced", "launched", "rolling out", "breaking", "salary",
          "versus", " vs ", "rumor", "leaked", "opinion", "hot take", "funding", "acquired"]
   # Ads, course pitches, sponsor reads.
+  # Humour. A Short is "funny" with one of these in its title/description (or 2+ anywhere).
+  funny: ["😂", "🤣", "💀", "lol", "lmao", "funny", "joke", "jokes", "meme", "memes", "humor",
+          "humour", "comedy", "relatable", "#funny", "#comedy", "#humor", "#meme", "#memes",
+          "#programmerhumor", "#codinghumor", "#developerhumor", "#codingmemes"]
+  # Skits / acted scenes. Wins over "funny" when both match.
+  skit: ["pov", "#pov", "skit", "#skit", "parody", "#parody", "be like", "me when",
+         "nobody:", "junior developer", "senior developer", "junior dev", "senior dev",
+         "my manager", "the intern"]
   promo: ["link in bio", "link in the description", "sign up", "my course", "enroll",
           "sponsored", "sponsor", "use code", "discount", "promo code", "check out my",
           "limited time", "free trial", "affiliate", "join my", "newsletter"]

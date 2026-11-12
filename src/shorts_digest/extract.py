@@ -24,8 +24,15 @@ from pydantic import BaseModel, Field
 from shorts_digest.config import PROJECT_ROOT, ConfigError
 
 # Stored with each row; bump when the rules change. v2: filler words removed from summaries.
-EXTRACTOR_VERSION = "rules-v2"
+# v3: style (serious/funny/skit) and has_takeaway; a skit's concept is what it jokes about.
+EXTRACTOR_VERSION = "rules-v3"
 DEFAULT_TERMS_PATH = PROJECT_ROOT / "config" / "terms.yaml"
+
+# Hashtags glue words (#codinghumour, #devpov), so whole-word phrases miss them; these stems
+# are matched inside hashtags instead. Each matching hashtag counts like a title phrase.
+_TAG_WORD_RE = re.compile(r"#(\w+)")
+FUNNY_TAG_STEMS = ("humor", "humour", "meme", "funny", "comedy", "joke")  # not "lol": #lollipop
+SKIT_TAG_STEMS = ("skit", "pov", "parody")
 
 MAX_CONCEPT_WORDS = 10
 MAX_SUMMARY_WORDS = 35
@@ -44,6 +51,8 @@ class ConceptExtraction(BaseModel):
     is_promotional: bool
     confidence: Literal["low", "medium", "high"]
     next_step: str | None
+    style: Literal["serious", "funny", "skit"] = "serious"
+    has_takeaway: bool = True  # False when there is nothing to learn (e.g. the joke is all)
     reasons: list[str] = []
 
 
@@ -62,13 +71,19 @@ class Term:
 class Vocabulary:
     terms: list[Term]
     signals: dict[str, list[re.Pattern]] = field(default_factory=dict)
-    tech_words: list[re.Pattern] = field(default_factory=list)
+    tech_words: dict[str, re.Pattern] = field(default_factory=dict)
 
     def mentions_tech(self, text: str) -> bool:
         """True if any topic term or general tech word appears (whole word)."""
         return any(t.pattern.search(text) for t in self.terms) or any(
-            p.search(text) for p in self.tech_words
+            p.search(text) for p in self.tech_words.values()
         )
+
+    def first_tech_word(self, text: str) -> str | None:
+        """Most frequent general tech word in ``text`` (what a skit is about), if any."""
+        counts = {w: len(p.findall(text)) for w, p in self.tech_words.items()}
+        best = max(counts, key=lambda w: counts[w], default=None)
+        return best if best and counts[best] else None
 
 
 def _word_pattern(phrase: str) -> re.Pattern:
@@ -101,9 +116,9 @@ def load_vocabulary(path: Path = DEFAULT_TERMS_PATH) -> Vocabulary:
         key: [_word_pattern(p) for p in phrases]
         for key, phrases in (data.get("signals") or {}).items()
     }
-    for key in ("howto", "hype", "news", "promo"):
+    for key in ("howto", "hype", "news", "promo", "funny", "skit"):
         signals.setdefault(key, [])
-    tech_words = [_word_pattern(w) for w in data.get("tech_words") or []]
+    tech_words = {str(w): _word_pattern(str(w)) for w in data.get("tech_words") or []}
     return Vocabulary(terms, signals, tech_words)
 
 
@@ -124,7 +139,9 @@ _CODE_RE = re.compile(
     re.IGNORECASE,
 )
 _HASHTAG_RE = re.compile(r"#\w+")
-_NON_TEXT_RE = re.compile(r"[^\w\s.,:;!?'\"()+/&-]")  # emojis and symbols
+# Emojis and symbols. The Devanagari block is kept explicitly: its vowel signs are combining
+# marks, which \w does not match, so "में" would otherwise lose its marks.
+_NON_TEXT_RE = re.compile(r"[^\w\s.,:;!?'\"()+/&\u0900-\u097F-]")
 
 
 def clean_title(title: str) -> str:
@@ -287,8 +304,39 @@ def extract(video: VideoText, vocab: Vocabulary, allowed_topics: list[str]) -> C
     if is_promo:
         reasons.append(f"promotional phrases x{promo}")
 
+    # 8. Style and takeaway. Score the content, not the tone: a funny Short that still
+    #    names a tool or shows how keeps its score. If the joke is the whole content, it has
+    #    no takeaway and is capped at 2. For skits, the concept is what is being joked about.
+    meta = f"{video.title}\n{video.description}"
+    skit_title, skit_all = _count(vocab.signals["skit"], meta), _count(vocab.signals["skit"], text)
+    funny_title = _count(vocab.signals["funny"], meta)
+    funny_all = _count(vocab.signals["funny"], text)
+    tags = [t.lower() for t in _TAG_WORD_RE.findall(meta)]
+    skit_title += sum(any(stem in t for stem in SKIT_TAG_STEMS) for t in tags)
+    funny_title += sum(any(stem in t for stem in FUNNY_TAG_STEMS) for t in tags)
+    if skit_title >= 1 or skit_all >= 2:
+        style = "skit"
+    elif funny_title >= 1 or funny_all >= 2:
+        style = "funny"
+    else:
+        style = "serious"
+    concept = clean_title(video.title)
+    has_takeaway = score >= 2
+    if style != "serious":
+        reasons.append(f"style: {style}")
+        if not concrete and howto < 2:
+            has_takeaway = False
+            if score > 2:
+                reasons.append("the joke is the whole content: capped at 2")
+            score = min(score, 2)
+        subject = focus or vocab.first_tech_word(text)
+        if subject:
+            concept = _trim(f"{subject}: {concept}", MAX_CONCEPT_WORDS)
+    if not has_takeaway:
+        reasons.append("no takeaway")
+
     return ConceptExtraction(
-        concept=clean_title(video.title),
+        concept=concept,
         method_or_tool=method,
         topic=topic,
         summary=summary,
@@ -297,6 +345,8 @@ def extract(video: VideoText, vocab: Vocabulary, allowed_topics: list[str]) -> C
         is_promotional=is_promo,
         confidence=confidence,
         next_step=next_step,
+        style=style,
+        has_takeaway=has_takeaway,
         reasons=reasons,
     )
 

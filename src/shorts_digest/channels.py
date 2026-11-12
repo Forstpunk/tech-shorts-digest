@@ -290,3 +290,83 @@ def apply_with_confirmation(
     path.write_text(new, encoding="utf-8")
     say(f"Saved. {len(additions)} channel(s) added.")
     return True
+
+
+# --- promotion flow for discovered channels (phase 9) ------------------------------
+#
+# candidate -> suggested (automatic, after 3 useful Shorts in 30 days; see pipeline.py)
+#           -> approved | rejected | blocked (only the owner, with these commands)
+
+
+def review_lines(rows: list) -> list[str]:
+    """Pending suggestions, with the exact commands to act on each."""
+    if not rows:
+        return ["No channels waiting for review."]
+    lines = []
+    for r in rows:
+        subs = "hidden" if r["subscribers"] is None else f"{r['subscribers']:,}"
+        url = (
+            f"https://www.youtube.com/{r['handle']}"
+            if r["handle"]
+            else f"https://www.youtube.com/channel/{r['channel_id']}"
+        )
+        lines += [
+            f"{r['title']}  ({r['channel_id']})  subscribers: {subs}  useful Shorts: "
+            f"{r['accepted']}  {url}",
+            f"  approve: python -m shorts_digest channels approve {r['channel_id']} "
+            f"--topic {r['topic'] or '<topic>'}",
+            f"  reject:  python -m shorts_digest channels reject {r['channel_id']}",
+            f"  block:   python -m shorts_digest channels block {r['channel_id']}",
+        ]
+    return lines
+
+
+def approve_channel(
+    conn,
+    config_path: Path,
+    channel_id: str,
+    topic: str,
+    topics: list[str],
+    ask: Ask,
+    say: Say,
+) -> bool:
+    """Add a discovered channel to channels.yaml after showing the diff. True if written."""
+    from shorts_digest import store
+
+    row = store.get_discovered_channel(conn, channel_id)
+    if row is None:
+        raise ConfigError(f"{channel_id} is not a discovered channel (see `channels review`)")
+    if topic not in topics:
+        raise ConfigError(f"--topic {topic!r} is not one of: {', '.join(topics)}")
+    current = validate_channels_text(config_path.read_text(encoding="utf-8"))
+    if any(ch.id == channel_id for _, ch in current.all_channels()):
+        say(f"{row['title']} is already in channels.yaml; marking it approved.")
+        store.set_channel_status(conn, channel_id, "approved", topic)
+        return False
+    written = apply_with_confirmation(config_path, [(topic, channel_id, row["title"])], ask, say)
+    if written:
+        store.set_channel_status(conn, channel_id, "approved", topic)
+        store.upsert_channel(conn, channel_id, row["title"], topic)  # now curated
+    return written
+
+
+def set_owner_status(conn, channel_id: str, status: str, say: Say) -> None:
+    """reject: never suggested again. block: also dropped by discovery from now on, and
+    its accepted-but-unsent Shorts are withdrawn from the next digest."""
+    from shorts_digest import store
+
+    row = store.get_discovered_channel(conn, channel_id)
+    if row is None:
+        raise ConfigError(f"{channel_id} is not a discovered channel (see `channels review`)")
+    store.set_channel_status(conn, channel_id, status)
+    withdrawn = 0
+    if status == "blocked":
+        with conn:
+            withdrawn = conn.execute(
+                "UPDATE videos SET status = 'rejected', reject_reason = 'channel_blocked' "
+                "WHERE channel_id = ? AND source = 'discovery' AND status != 'rejected' "
+                "AND video_id NOT IN (SELECT video_id FROM digest_items)",
+                (channel_id,),
+            ).rowcount
+    extra = f"; {withdrawn} pending Short(s) withdrawn" if withdrawn else ""
+    say(f"{row['title']} is now {status}{extra}.")

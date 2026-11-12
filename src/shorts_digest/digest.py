@@ -3,12 +3,17 @@
 Ranking: usefulness, then confidence, then items that had a real transcript, then newest.
 Selection walks that ranking and skips a topic once it has ``max_per_topic`` items, so one
 busy topic (often AI) can't crowd out the rest. The digest stays short on purpose.
+
+Sections (empty ones are left out):
+- main: curated channels, ``digest_size`` items balanced across topics
+- New voices: up to ``NEW_VOICES_SIZE`` discovery items; they never take main slots
+- Channels to consider adding: discovered channels that earned a suggestion
 """
 
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -25,9 +30,11 @@ TOPIC_LABELS = {
     "productivity": "Productivity",
 }
 _CONFIDENCE_RANK = {"high": 2, "medium": 1, "low": 0}
+NEW_VOICES_SIZE = 3
 
 CSV_COLUMNS = [
     "rank",
+    "section",
     "topic",
     "concept",
     "summary",
@@ -40,6 +47,10 @@ CSV_COLUMNS = [
     "channel",
     "published_at",
     "video_id",
+    "style",
+    "subscribers",
+    "views",
+    "keyword",
 ]
 
 
@@ -59,6 +70,22 @@ class DigestItem:
     published_at: str
     text_source: str
     rank: int = 0
+    style: str = "serious"
+    section: str = "curated"  # "curated" (main) or "discovery" (New voices)
+    subscribers: int | None = None  # discovery only: channel size when found
+    views: int | None = None
+    keyword: str | None = None  # discovery only: the search that found it
+    channel_id: str = ""
+
+
+@dataclass
+class Suggestion:
+    channel_id: str
+    title: str
+    url: str
+    subscribers: int | None
+    accepted: int  # useful Shorts so far
+    topic: str | None  # most common topic of its Shorts, offered in the approve command
 
 
 @dataclass
@@ -67,6 +94,8 @@ class Digest:
     items: list[DigestItem]
     shorts_considered: int
     channels_considered: int
+    new_voices: list[DigestItem] = field(default_factory=list)
+    suggestions: list[Suggestion] = field(default_factory=list)
 
 
 def topic_label(topic: str) -> str:
@@ -80,6 +109,23 @@ def rank_key(item: DigestItem) -> tuple:
         item.text_source == "transcript",
         item.published_at,
     )
+
+
+def select_new_voices(candidates: list[DigestItem], size: int, start_rank: int) -> list[DigestItem]:
+    """Best discovery items, one per channel; ranks continue after the main section."""
+    picked: list[DigestItem] = []
+    channels: set[str] = set()
+    for item in sorted(candidates, key=rank_key, reverse=True):
+        if len(picked) >= size:
+            break
+        key = item.channel_id or item.channel  # IDs: two channels can share a name
+        if key in channels:
+            continue
+        channels.add(key)
+        picked.append(item)
+    for i, item in enumerate(picked, start=start_rank):
+        item.rank = i
+    return picked
 
 
 def select(candidates: list[DigestItem], size: int, max_per_topic: int) -> list[DigestItem]:
@@ -109,7 +155,7 @@ def render_markdown(digest: Digest) -> str:
         f"{len(digest.items)} picked from {digest.shorts_considered} new Shorts "
         f"across {digest.channels_considered} channels.",
     ]
-    if not digest.items:
+    if not digest.items and not digest.new_voices and not digest.suggestions:
         lines += ["", "Nothing passed the filters this time. Nothing to watch today."]
         return "\n".join(lines) + "\n"
 
@@ -122,13 +168,45 @@ def render_markdown(digest: Digest) -> str:
         if item.method_or_tool:
             meta.append(f"Tool/method: {item.method_or_tool}")
         meta += [f"Level: {item.difficulty}", f"Score: {item.usefulness}/5"]
-        # Two trailing spaces = a Markdown line break, so each field stays on its own line.
-        lines.append(f"{item.rank}. **{item.concept}** — {item.summary}  ")
-        lines.append(f"   {' · '.join(meta)}  ")
-        if item.next_step:
-            lines.append(f"   Next step: {item.next_step}  ")
-        lines.append(f"   {item.url} — {item.channel}")
+        lines += _item_lines(item, meta)
+
+    if digest.new_voices:
+        lines += ["", "## New voices", "_Small channels doing unusually well; found by search._"]
+        for item in digest.new_voices:
+            meta = [
+                f"{_num(item.subscribers)} subscribers",
+                f"{_num(item.views)} views",
+                f'found by "{item.keyword}"',
+                f"Score: {item.usefulness}/5",
+            ]
+            lines += _item_lines(item, meta)
+
+    if digest.suggestions:
+        lines += ["", "## Channels to consider adding"]
+        for sg in digest.suggestions:
+            lines.append(
+                f"- **{sg.title}** ({_num(sg.subscribers)} subscribers) — {sg.accepted} useful "
+                f"Shorts so far. {sg.url}  "
+            )
+            lines.append(
+                f"  `python -m shorts_digest channels approve {sg.channel_id} "
+                f"--topic {sg.topic or '<topic>'}`"
+            )
     return "\n".join(lines) + "\n"
+
+
+def _num(n: int | None) -> str:
+    return "?" if n is None else f"{n:,}"
+
+
+def _item_lines(item: DigestItem, meta: list[str]) -> list[str]:
+    tag = f" [{item.style}]" if item.style in ("funny", "skit") else ""
+    # Two trailing spaces = a Markdown line break, so each field stays on its own line.
+    lines = [f"{item.rank}. **{item.concept}**{tag} — {item.summary}  ", f"   {' · '.join(meta)}  "]
+    if item.next_step:
+        lines.append(f"   Next step: {item.next_step}  ")
+    lines.append(f"   {item.url} — {item.channel}")
+    return lines
 
 
 def write_outputs(
@@ -148,6 +226,6 @@ def write_outputs(
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         writer.writeheader()
-        for item in digest.items:
+        for item in digest.items + digest.new_voices:
             writer.writerow(vars(item))
     return md_path, csv_path

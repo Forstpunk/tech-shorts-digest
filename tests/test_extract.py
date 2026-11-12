@@ -154,3 +154,8 @@ def test_tidy_speech_removes_filler_and_stutters():
     assert (
         tidy_speech("um and we added uh these to the the repo") == "And we added these to the repo"
     )
+
+
+def test_clean_title_keeps_hindi_and_drops_emoji():
+    title = "🔥 Free AI Video Generator 😱 1 Click में 5 मिनट का AI Video बनाओ!"
+    assert clean_title(title) == "Free AI Video Generator 1 Click में 5 मिनट का"  # 10 words

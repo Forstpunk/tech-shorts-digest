@@ -14,7 +14,9 @@ Steps (CLAUDE.md section 6a):
 A dry run does all of this with real API calls (so it spends real quota) but stores nothing
 and does not advance the keyword rotation.
 
-Phase 8 stops here. Phase 9 sends kept candidates through text + extraction.
+Kept candidates (not in a dry run) are queued in the ``videos`` table with
+``source = 'discovery'``, so the normal text -> extract -> filter stages handle them and the
+digest shows the accepted ones under "New voices".
 """
 
 from __future__ import annotations
@@ -267,6 +269,20 @@ def rank_and_cap(
             kept += 1
 
 
+def topic_hint(text: str, vocab: Vocabulary, topics: list[str]) -> str:
+    """Configured topic whose terms appear most in ``text``; the first topic if none do.
+
+    A discovered channel has no topic of its own, but the extractor needs a starting topic
+    as its tie-breaker. The keyword plus title/description is the best clue we have.
+    """
+    votes = {t: 0 for t in topics}
+    for term in vocab.terms:
+        if term.topic in votes:
+            votes[term.topic] += len(term.pattern.findall(text))
+    best = max(topics, key=lambda t: votes[t])
+    return best if votes[best] else topics[0]
+
+
 def _day_start_utc(day: str) -> str:
     start = datetime.combine(date.fromisoformat(day), time(0), tzinfo=PACIFIC)
     return start.astimezone(UTC).isoformat(timespec="seconds")
@@ -431,6 +447,19 @@ def discover(
                 for c in cands
             ],
         )
+        topics = cfg.channels.topic_names
+        for c in result.kept:
+            store.add_discovered_video(
+                conn,
+                c.video_id,
+                c.channel_id,
+                c.channel_title,
+                topic_hint(f"{c.keyword}\n{c.title}\n{c.description}", vocab, topics),
+                c.title,
+                c.description,
+                c.published_at,
+                c.duration_seconds or 0,
+            )
     return result
 
 

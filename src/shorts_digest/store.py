@@ -155,6 +155,15 @@ MIGRATIONS: list[str] = [
     ALTER TABLE discovery_candidates ADD COLUMN description TEXT;
     ALTER TABLE discovery_candidates ADD COLUMN language TEXT;
     """,
+    # 7: phase 9 - discovered Shorts flow through the same pipeline, tagged by source;
+    #    extractions learn style (serious/funny/skit) and has_takeaway
+    """
+    ALTER TABLE channels ADD COLUMN source TEXT NOT NULL DEFAULT 'curated';
+    ALTER TABLE videos ADD COLUMN source TEXT NOT NULL DEFAULT 'curated';
+    CREATE INDEX idx_videos_source ON videos(source, status);
+    ALTER TABLE extractions ADD COLUMN style TEXT;
+    ALTER TABLE extractions ADD COLUMN has_takeaway INTEGER;
+    """,
 ]
 
 
@@ -189,8 +198,10 @@ def upsert_channel(conn: sqlite3.Connection, channel_id: str, title: str, topic:
     with conn:
         conn.execute(
             """
-            INSERT INTO channels (channel_id, title, topic, added_at) VALUES (?, ?, ?, ?)
-            ON CONFLICT(channel_id) DO UPDATE SET title = excluded.title, topic = excluded.topic
+            INSERT INTO channels (channel_id, title, topic, added_at, source)
+            VALUES (?, ?, ?, ?, 'curated')
+            ON CONFLICT(channel_id) DO UPDATE SET title = excluded.title, topic = excluded.topic,
+                source = 'curated'
             """,
             (channel_id, title, topic, now_iso()),
         )
@@ -408,6 +419,47 @@ def save_text(
         )
 
 
+def add_discovered_video(
+    conn: sqlite3.Connection,
+    video_id: str,
+    channel_id: str,
+    channel_title: str,
+    topic_hint: str,
+    title: str,
+    description: str,
+    published_at: str,
+    duration_seconds: int,
+) -> None:
+    """Queue a kept discovery candidate for the normal text -> extract -> filter path.
+
+    The channel row is only created if missing: a curated channel is never downgraded.
+    ``topic_hint`` is a starting topic for the extractor's tie-break (see discovery.py).
+    """
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO channels (channel_id, title, topic, added_at, source) "
+            "VALUES (?, ?, ?, ?, 'discovery')",
+            (channel_id, channel_title, topic_hint, now_iso()),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO videos (video_id, channel_id, title, description, published_at,
+                duration_seconds, is_short, url, fetched_at, status, source)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 'new', 'discovery')
+            """,
+            (
+                video_id,
+                channel_id,
+                title,
+                description,
+                published_at,
+                duration_seconds,
+                f"https://www.youtube.com/shorts/{video_id}",
+                now_iso(),
+            ),
+        )
+
+
 def videos_needing_extraction(
     conn: sqlite3.Connection, limit: int | None = None
 ) -> list[sqlite3.Row]:
@@ -435,8 +487,8 @@ def save_extraction(
             """
             INSERT OR REPLACE INTO extractions (video_id, concept, method_or_tool, topic, summary,
                 difficulty, usefulness, is_promotional, confidence, next_step, model,
-                prompt_version, created_at, reasons)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                prompt_version, created_at, reasons, style, has_takeaway)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 video_id,
@@ -453,6 +505,8 @@ def save_extraction(
                 version,
                 now_iso(),
                 json.dumps(data.get("reasons", [])),
+                data.get("style", "serious"),
+                int(data.get("has_takeaway", True)),
             ),
         )
         conn.execute("UPDATE videos SET status = 'extracted' WHERE video_id = ?", (video_id,))
@@ -465,7 +519,8 @@ def videos_to_filter(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Extracted, not yet filtered. Best first, so a duplicate keeps the better copy."""
     return conn.execute(
         """
-        SELECT v.video_id, e.concept, e.usefulness, e.is_promotional
+        SELECT v.video_id, e.concept, e.usefulness, e.is_promotional,
+               coalesce(e.has_takeaway, 1) AS has_takeaway
         FROM videos v JOIN extractions e USING (video_id)
         WHERE v.status = 'extracted'
         ORDER BY e.usefulness DESC, v.published_at DESC
@@ -498,19 +553,25 @@ _NOT_DIGESTED = "AND v.video_id NOT IN (SELECT video_id FROM digest_items)"
 
 
 def digest_candidates(
-    conn: sqlite3.Connection, since: str, exclude_digested: bool
+    conn: sqlite3.Connection, since: str, exclude_digested: bool, source: str = "curated"
 ) -> list[sqlite3.Row]:
-    """Accepted Shorts published since ``since`` with everything the digest shows."""
+    """Accepted Shorts published since ``since`` with everything the digest shows.
+
+    For discovery items it also brings the numbers "New voices" shows (from the candidate
+    row: subscribers and views when found, and the keyword that found it).
+    """
     return conn.execute(
         f"""
         SELECT v.video_id, e.topic, e.concept, e.summary, e.method_or_tool, e.difficulty,
                e.usefulness, e.confidence, e.next_step, v.url, c.title AS channel,
-               v.published_at, v.text_source
+               v.published_at, v.text_source, coalesce(e.style, 'serious') AS style,
+               v.source AS section, d.subscribers, d.views, d.keyword, v.channel_id
         FROM videos v JOIN extractions e USING (video_id) JOIN channels c USING (channel_id)
-        WHERE v.status = 'accepted' AND v.published_at >= ?
+        LEFT JOIN discovery_candidates d USING (video_id)
+        WHERE v.status = 'accepted' AND v.published_at >= ? AND v.source = ?
         {_NOT_DIGESTED if exclude_digested else ""}
         """,
-        (since,),
+        (since, source),
     ).fetchall()
 
 
@@ -521,7 +582,7 @@ def shorts_pool_counts(
     row = conn.execute(
         f"""
         SELECT count(*) AS n, count(DISTINCT v.channel_id) AS ch FROM videos v
-        WHERE v.is_short = 1 AND v.published_at >= ?
+        WHERE v.is_short = 1 AND v.published_at >= ? AND v.source = 'curated'
         {_NOT_DIGESTED if exclude_digested else ""}
         """,
         (since,),
@@ -668,4 +729,86 @@ def save_candidates(conn: sqlite3.Connection, rows: list[dict]) -> None:
                 :description, :language)
             """,
             rows,
+        )
+
+
+# --- promotion of discovered channels ----------------------------------------------
+
+
+def promote_channels(conn: sqlite3.Connection, min_usefulness: int, since: str, needed: int):
+    """candidate -> suggested once a channel has ``needed`` accepted Shorts at or above
+    ``min_usefulness`` since ``since``. Rejected/blocked/approved channels are never touched,
+    so a rejected channel is never suggested again. Returns the newly suggested IDs."""
+    rows = conn.execute(
+        """
+        SELECT dc.channel_id FROM discovered_channels dc
+        JOIN videos v ON v.channel_id = dc.channel_id AND v.source = 'discovery'
+        JOIN extractions e ON e.video_id = v.video_id
+        WHERE dc.status = 'candidate' AND v.status = 'accepted'
+          AND e.usefulness >= ? AND e.created_at >= ?
+        GROUP BY dc.channel_id HAVING count(*) >= ?
+        """,
+        (min_usefulness, since, needed),
+    ).fetchall()
+    ids = [r["channel_id"] for r in rows]
+    with conn:
+        conn.executemany(
+            "UPDATE discovered_channels SET status = 'suggested', status_changed_at = ? "
+            "WHERE channel_id = ?",
+            [(now_iso(), cid) for cid in ids],
+        )
+    return ids
+
+
+def channel_suggestions(
+    conn: sqlite3.Connection, shown_before: str | None = None
+) -> list[sqlite3.Row]:
+    """Suggested channels with their useful-Short count and most common topic.
+
+    ``shown_before``: only channels not shown in a digest since then (weekly reminder).
+    """
+    extra = ""
+    params: list = []
+    if shown_before is not None:
+        extra = "AND (dc.last_suggested_at IS NULL OR dc.last_suggested_at < ?)"
+        params.append(shown_before)
+    return conn.execute(
+        f"""
+        SELECT dc.channel_id, dc.title, dc.handle, dc.subscribers, dc.status,
+               dc.last_suggested_at,
+               (SELECT count(*) FROM videos v WHERE v.channel_id = dc.channel_id
+                  AND v.source = 'discovery' AND v.status = 'accepted') AS accepted,
+               (SELECT e.topic FROM videos v JOIN extractions e USING (video_id)
+                  WHERE v.channel_id = dc.channel_id AND v.status = 'accepted'
+                  GROUP BY e.topic ORDER BY count(*) DESC LIMIT 1) AS topic
+        FROM discovered_channels dc
+        WHERE dc.status = 'suggested' {extra}
+        ORDER BY accepted DESC, dc.subscribers DESC
+        """,
+        params,
+    ).fetchall()
+
+
+def mark_suggested_shown(conn: sqlite3.Connection, channel_ids: list[str]) -> None:
+    with conn:
+        conn.executemany(
+            "UPDATE discovered_channels SET last_suggested_at = ? WHERE channel_id = ?",
+            [(now_iso(), cid) for cid in channel_ids],
+        )
+
+
+def get_discovered_channel(conn: sqlite3.Connection, channel_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM discovered_channels WHERE channel_id = ?", (channel_id,)
+    ).fetchone()
+
+
+def set_channel_status(
+    conn: sqlite3.Connection, channel_id: str, status: str, topic: str | None = None
+) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE discovered_channels SET status = ?, status_changed_at = ?, "
+            "topic = coalesce(?, topic) WHERE channel_id = ?",
+            (status, now_iso(), topic, channel_id),
         )
