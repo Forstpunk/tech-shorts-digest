@@ -52,3 +52,28 @@ def test_fetch_stops_without_api_key(caplog, monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "load_config", lambda: load_config(env_file=tmp_path / "none.env"))
     assert main(["fetch"]) == 2
     assert "YOUTUBE_API_KEY" in caplog.text
+
+
+def test_fetch_records_run_and_summary(caplog, monkeypatch, tmp_path):
+    from fakes import FakeYouTube
+
+    import shorts_digest.cli as cli
+    import shorts_digest.youtube as youtube
+    from shorts_digest import store
+    from shorts_digest.config import load_config
+
+    caplog.set_level("INFO")
+    monkeypatch.setenv("YOUTUBE_API_KEY", "fake-key-for-tests")
+    monkeypatch.setattr(cli, "load_config", lambda: load_config(env_file=tmp_path / "none.env"))
+    monkeypatch.setattr(store, "DEFAULT_DB_PATH", tmp_path / "cli.db")
+    monkeypatch.setattr(youtube, "build_client", lambda key: FakeYouTube())
+
+    assert main(["fetch", "--limit", "5"]) == 0
+    assert "found=0 kept=0" in caplog.text
+    row = store.connect(tmp_path / "cli.db").execute("SELECT command, status FROM runs").fetchone()
+    assert tuple(row) == ("fetch", "success")
+
+
+def test_limit_must_be_positive():
+    with pytest.raises(SystemExit):
+        main(["fetch", "--limit", "0"])

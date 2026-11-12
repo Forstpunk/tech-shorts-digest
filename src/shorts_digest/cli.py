@@ -10,9 +10,52 @@ import argparse
 import logging
 from collections.abc import Callable
 
+from shorts_digest import store
 from shorts_digest.config import AppConfig, ConfigError, load_config
 
 log = logging.getLogger("shorts_digest")
+
+
+def _fetch(cfg: AppConfig, command: str, limit: int | None) -> int:
+    """Run the fetch stage inside a recorded run. Imports are local so --help stays fast."""
+    from shorts_digest.pipeline import fetch_stage
+    from shorts_digest.youtube import QuotaTracker, YouTubeFatalError, build_client
+
+    cfg.require_channels()
+    cfg.env.require("YOUTUBE_API_KEY")
+    conn = store.connect()
+    run_id = store.start_run(conn, command)
+    quota = QuotaTracker()
+    try:
+        result = fetch_stage(cfg, conn, build_client(cfg.env.get("YOUTUBE_API_KEY")), quota, limit)
+    except Exception as exc:
+        # "Fail loud per run": record the error, then exit non-zero.
+        store.finish_run(conn, run_id, "failed", quota_estimate=quota.units, error=str(exc))
+        if isinstance(exc, YouTubeFatalError):
+            log.error("YouTube API refused the run: %s", exc)
+            return 1
+        raise
+    # A --limit run is "partial": the next run looks back from the last *complete* run.
+    status = "success" if result.complete else "partial"
+    store.finish_run(
+        conn,
+        run_id,
+        status,
+        videos_found=result.videos_found,
+        shorts_kept=result.shorts_kept,
+        quota_estimate=quota.units,
+    )
+    log.info(
+        "Run %d %s: found=%d kept=%d channels_failed=%d quota=%d units %s",
+        run_id,
+        status,
+        result.videos_found,
+        result.shorts_kept,
+        result.channels_failed,
+        quota.units,
+        quota.calls,
+    )
+    return 0
 
 
 def _not_implemented(stage: str, phase: int) -> int:
@@ -21,16 +64,15 @@ def _not_implemented(stage: str, phase: int) -> int:
 
 
 def cmd_run(cfg: AppConfig, args: argparse.Namespace) -> int:
-    cfg.require_channels()
-    if not args.dry_run:
-        cfg.env.require("YOUTUBE_API_KEY")
-    return _not_implemented("run", 2)
+    # Phase 2: only the fetch stage exists. Later phases add text, LLM and digest stages.
+    code = _fetch(cfg, "run", args.limit)
+    if code == 0:
+        log.info("Stages after fetch are not implemented yet (phases 3-5).")
+    return code
 
 
 def cmd_fetch(cfg: AppConfig, args: argparse.Namespace) -> int:
-    cfg.require_channels()
-    cfg.env.require("YOUTUBE_API_KEY")
-    return _not_implemented("fetch", 2)
+    return _fetch(cfg, "fetch", args.limit)
 
 
 def cmd_extract(cfg: AppConfig, args: argparse.Namespace) -> int:
@@ -45,6 +87,13 @@ def cmd_discover_channels(cfg: AppConfig, args: argparse.Namespace) -> int:
     return _not_implemented("discover-channels", 2)
 
 
+def _positive_int(value: str) -> int:
+    n = int(value)
+    if n <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return n
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="shorts_digest",
@@ -55,15 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("run", help="full pipeline")
     p.add_argument("--dry-run", action="store_true", help="no LLM calls, no email; print plan")
-    p.add_argument("--limit", type=int, help="process at most N videos")
+    p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("fetch", help="discovery + classify only")
-    p.add_argument("--limit", type=int, help="process at most N videos")
+    p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_fetch)
 
     p = sub.add_parser("extract", help="LLM stage on stored, unprocessed videos")
-    p.add_argument("--limit", type=int, help="process at most N videos")
+    p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_extract)
 
     p = sub.add_parser("digest", help="rebuild a digest from stored data")

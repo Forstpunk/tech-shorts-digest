@@ -5,7 +5,8 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, uses 
 the one concept each Short teaches, filters out ads and fluff, and produces a 5–10 item
 "what to learn next" digest with links.
 
-> **Status:** Phase 1 of 8 — project skeleton, config validation and CLI stubs.
+> **Status:** Phase 2 of 8 — discovery works: new uploads from 29 channels are classified as
+> Shorts and stored in SQLite.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -45,12 +46,26 @@ pytest -q
 ruff check . && ruff format .
 ```
 
-In Phase 1 each command validates config and then reports that its stage is not built yet.
+`fetch` (and `run`, which currently stops after fetch) are live; the other commands are stubs.
+
+## Quota
+
+A daily run costs about **30 of 10,000** YouTube API units: one `playlistItems.list` per channel
+plus one `videos.list` per 50 new videos. Each channel's uploads playlist ID is looked up once
+and cached in SQLite. `search.list` (100 units) is never used in the daily run. Every run logs
+its estimate and stores it in the `runs` table.
+
+## Data model
+
+SQLite at `data/digest.db` (gitignored). Every discovered video is stored, including rejected
+ones (`status = rejected`, `reject_reason = not_short`), so nothing is fetched twice. A `--limit`
+run is recorded as `partial`, and the next run looks back from the last *complete* run, so
+skipped videos are not lost.
 
 ## Roadmap
 
 1. ✅ Skeleton — layout, config validation, CLI, tests
-2. Discovery — channels → new videos → Shorts, stored in SQLite
+2. ✅ Discovery — channels → new videos → Shorts, stored in SQLite
 3. Transcripts with fallback to title + description
 4. LLM concept extraction
 5. Dedup, ranking, Markdown/CSV digest
