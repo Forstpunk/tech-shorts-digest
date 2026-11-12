@@ -8,5 +8,33 @@ max_per_topic: 3
 quota:
   daily_limit: 6000       # our own ceiling per day (Google's is 10,000); calls past it are refused
   curated_reserve: 500    # kept back for the curated fetch; discovery spends only what is left
+# Discovery: a capped daily keyword search for small creators whose Shorts do unusually
+# well for their size. Each search costs 100 quota units; at most 15 a day.
+discovery:
+  enabled: true
+  max_searches_per_day: 15
+  lookback_days: 7               # only Shorts published in the last N days
+  relevance_language: en
+  safe_search: moderate
+  min_subscribers: 1000          # channel size window: small but real
+  max_subscribers: 100000
+  min_uploads: 5                 # skip brand-new / one-video channels
+  min_views: 5000
+  min_views_per_subscriber: 2.0  # "doing unusually well for its size"
+  max_candidates_per_day: 20     # most that go on to extraction
+  channel_stats_cache_days: 7
+  keywords:                      # rotated round-robin if there are more than the daily cap
+    - python trick
+    - python tips
+    - sql tip
+    - excel hack
+    - ai tool tutorial
+    - chatgpt prompt tip
+    - linux command
+    - git tip
+    - data engineering explained
+    - vscode shortcut
+    - coding humor
+    - programmer skit
 email:
   enabled: false

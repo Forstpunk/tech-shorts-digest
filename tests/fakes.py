@@ -47,12 +47,20 @@ class FakeYouTube:
     playlists: {playlist_id: [ {videoId, videoPublishedAt}, ... ] newest first} or an Exception
     videos:    {video_id: {channelId, title, duration, publishedAt}}
     info:      {channel_id: {title, handle, subs, videos, hidden}} - snippet/statistics
-    search:    {query: [channel_id, ...]} - search.list results
+    search:    {query: [channel_id, ...]} - search.list type=channel results
+    video_search: {query: [video_id, ...]} - search.list type=video results (from videos)
     failures:  {"videos.list": [exc, exc]} - raised on the next attempts of that method
     """
 
     def __init__(
-        self, channels=None, playlists=None, videos=None, page_size=50, info=None, search=None
+        self,
+        channels=None,
+        playlists=None,
+        videos=None,
+        page_size=50,
+        info=None,
+        search=None,
+        video_search=None,
     ):
         self.channels_data = channels or {}
         self.playlists_data = playlists or {}
@@ -60,6 +68,7 @@ class FakeYouTube:
         self.page_size = page_size
         self.channel_info = info or {}  # {cid: {title, handle, subs, videos, hidden}}
         self.search_results = search or {}  # {query: [cid, ...]}
+        self.video_search = video_search or {}  # {query: [video_id, ...]}
         self.calls: list[tuple[str, dict]] = []
         self.failures: dict[str, list[Exception]] = {}
 
@@ -95,7 +104,20 @@ class FakeYouTube:
         return _Resource(fn, self.calls, "channels.list", self.failures)
 
     def search(self):
-        def fn(q, maxResults=5, **_):
+        def fn(q, maxResults=5, type="channel", **_):
+            if type == "video":
+                items = []
+                for vid in self.video_search.get(q, [])[:maxResults]:
+                    v = self.videos_data.get(vid, {})
+                    snippet = {
+                        "channelId": v.get("channelId", ""),
+                        "title": v.get("title", vid),
+                        "publishedAt": v.get("publishedAt", ""),
+                    }
+                    items.append(
+                        {"id": {"kind": "youtube#video", "videoId": vid}, "snippet": snippet}
+                    )
+                return {"items": items}
             ids = self.search_results.get(q, [])[:maxResults]
             return {"items": [{"id": {"kind": "youtube#channel", "channelId": c}} for c in ids]}
 
@@ -131,6 +153,7 @@ class FakeYouTube:
                                 "publishedAt": v["publishedAt"],
                             },
                             "contentDetails": {"duration": v["duration"]},
+                            "statistics": {"viewCount": str(v["views"])} if "views" in v else {},
                         }
                     )
             return {"items": items}

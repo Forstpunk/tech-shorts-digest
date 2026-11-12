@@ -66,6 +66,7 @@ class VideoDetails:
     description: str
     published_at: str
     duration: str  # raw ISO 8601, e.g. "PT45S"
+    views: int | None = None  # statistics.viewCount (None if hidden)
 
 
 def build_client(api_key: str) -> Any:
@@ -108,6 +109,10 @@ def _execute(request: Any, quota: Quota, method: str) -> dict:
         log.warning("%s: %s, retrying in %.0fs (attempt %d)", method, problem, pause, attempt)
         _sleep(pause)
     raise AssertionError("unreachable")
+
+
+def _int_or_none(value: Any) -> int | None:
+    return None if value is None else int(value)
 
 
 def _parse_ts(value: str) -> datetime:
@@ -170,13 +175,16 @@ def list_recent_uploads(
 
 
 def fetch_video_details(client: Any, video_ids: list[str], quota: Quota) -> dict[str, VideoDetails]:
-    """Title, description and duration for up to 50 videos per call."""
+    """Title, description, duration and views for up to 50 videos per call (1 unit each;
+    asking for more parts does not cost more)."""
     result: dict[str, VideoDetails] = {}
     for i in range(0, len(video_ids), MAX_IDS_PER_CALL):
         batch = video_ids[i : i + MAX_IDS_PER_CALL]
         resp = _execute(
             client.videos().list(
-                part="snippet,contentDetails", id=",".join(batch), maxResults=MAX_IDS_PER_CALL
+                part="snippet,contentDetails,statistics",
+                id=",".join(batch),
+                maxResults=MAX_IDS_PER_CALL,
             ),
             quota,
             "videos.list",
@@ -190,6 +198,7 @@ def fetch_video_details(client: Any, video_ids: list[str], quota: Quota) -> dict
                 description=snip.get("description", ""),
                 published_at=snip.get("publishedAt", ""),
                 duration=item["contentDetails"].get("duration", ""),
+                views=_int_or_none(item.get("statistics", {}).get("viewCount")),
             )
     return result
 
@@ -267,3 +276,57 @@ def search_channels(
     ids = [it["id"]["channelId"] for it in resp.get("items", []) if "channelId" in it["id"]]
     found = channels_by_id(client, ids, quota) if ids else {}
     return [found[i] for i in ids if i in found]
+
+
+# --- video search (discovery only: 100 units per call) -----------------------------
+
+
+@dataclass
+class SearchHit:
+    video_id: str
+    channel_id: str
+    title: str
+    published_at: str
+
+
+def search_short_videos(
+    client: Any,
+    query: str,
+    order: str,
+    published_after: datetime,
+    relevance_language: str,
+    safe_search: str,
+    quota: Quota,
+) -> list[SearchHit]:
+    """One page (max 50) of recent short videos for a keyword. Never paginates.
+
+    videoDuration=short means under 4 minutes on YouTube's side, so callers still check the
+    real duration against max_short_seconds.
+    """
+    resp = _execute(
+        client.search().list(
+            part="snippet",
+            q=query,
+            type="video",
+            videoDuration="short",
+            maxResults=MAX_IDS_PER_CALL,
+            safeSearch=safe_search,
+            relevanceLanguage=relevance_language,
+            order=order,
+            publishedAfter=published_after.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
+        quota,
+        "search.list",
+    )
+    hits = []
+    for it in resp.get("items", []):
+        vid = it.get("id", {}).get("videoId")
+        if not vid:
+            continue
+        snip = it.get("snippet", {})
+        hits.append(
+            SearchHit(
+                vid, snip.get("channelId", ""), snip.get("title", ""), snip.get("publishedAt", "")
+            )
+        )
+    return hits

@@ -282,6 +282,48 @@ def cmd_quota(cfg: AppConfig, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_discover(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Discovery job only (search -> enrich -> filter -> rank). Prints a review report."""
+    from shorts_digest import digest as digest_mod
+    from shorts_digest import youtube
+    from shorts_digest.discovery import discover, render_report, write_report_csv
+    from shorts_digest.quota import QuotaLimitError
+
+    d = cfg.settings.discovery
+    if not d.enabled:
+        log.info("Discovery is disabled in settings.yaml (discovery.enabled).")
+        return 0
+    cfg.env.require("YOUTUBE_API_KEY")
+    conn = store.connect()
+    guard = _new_guard(cfg, conn, "discovery")
+    client = youtube.build_client(cfg.env.get("YOUTUBE_API_KEY"))
+    try:
+        result = discover(
+            cfg, conn, client, guard, dry_run=args.dry_run, max_searches=args.max_searches
+        )
+    except (youtube.YouTubeFatalError, QuotaLimitError) as exc:
+        log.error("Discovery failed: %s", exc)
+        return 1
+    print(render_report(result, show_dropped=args.show_dropped))
+    csv_path = write_report_csv(result, digest_mod.DEFAULT_OUTPUT_DIR, guard.day)
+    log.info(
+        "Discovery %s: searches=%d found=%d judged=%d kept=%d dropped=%d -> %s "
+        "quota=%d units (discovery %d, today %d/%d)",
+        "dry run" if args.dry_run else "done",
+        result.searches,
+        result.hits,
+        len(result.candidates),
+        len(result.kept),
+        len(result.candidates) - len(result.kept),
+        csv_path.name,
+        guard.units,
+        guard.used_today("discovery"),
+        guard.used_today(),
+        guard.daily_limit,
+    )
+    return 0
+
+
 def _interactive() -> bool:
     import sys
 
@@ -380,6 +422,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("digest", help="rebuild a digest from stored data")
     p.add_argument("--days", type=_positive_int, default=7, help="look back N days (default 7)")
     p.set_defaults(func=cmd_digest)
+
+    p = sub.add_parser("discover", help="find small, rising creators (keyword search)")
+    p.add_argument(
+        "--dry-run", action="store_true", help="real searches, but save nothing; prints a report"
+    )
+    p.add_argument("--max-searches", type=_positive_int, help="at most N searches (100 units each)")
+    p.add_argument(
+        "--show-dropped",
+        type=int,
+        default=3,
+        metavar="N",
+        help="examples per drop reason in the report (default 3; full list in the CSV)",
+    )
+    p.set_defaults(func=cmd_discover)
 
     p = sub.add_parser("quota", help="today's YouTube API quota use")
     p.set_defaults(func=cmd_quota)

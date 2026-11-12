@@ -5,10 +5,10 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, pulls
 each one teaches with a transparent rule-based extractor (no LLM, no AI API keys), filters out ads
 and fluff, and produces a 5–10 item "what to learn next" digest with links.
 
-> **Status:** Phase 7 of 11 — the curated pipeline runs end to end with a quota guard,
+> **Status:** Phase 8 of 11 — the curated pipeline runs end to end with a quota guard,
 > retries and resume-after-failure, and writes a daily digest (`output/digest-YYYY-MM-DD.md`
-> + `.csv`). Channels can be added by name with `resolve-channels`. Next: discovery of small,
-> rising creators.
+> + `.csv`). Discovery finds and ranks small, rising creators (`discover --dry-run`); next it
+> feeds a "New voices" digest section.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -46,6 +46,7 @@ python -m shorts_digest extract              # concept extraction on stored Shor
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
 python -m shorts_digest quota                # today's API quota use, by source and method
 python -m shorts_digest resolve-channels     # add channels by name (see below)
+python -m shorts_digest discover --dry-run --max-searches 3   # preview discovery (see below)
 
 pytest -q
 ruff check . && ruff format .
@@ -103,6 +104,28 @@ Put names, @handles, channel URLs or IDs in `config/channel_names.txt` (one per 
 At the end it shows the `channels.yaml` diff and writes only after a final yes. The file is
 edited as text, so comments and layout survive, and the result is validated before saving.
 Quota is logged under the `resolve` source.
+
+## Discovery (small, rising creators)
+
+Curated channels are big names. Discovery looks for small creators whose Shorts are doing
+unusually well for their size, using a capped keyword search (`discovery:` in settings.yaml):
+
+1. **Search:** one `search.list` per keyword (100 units each, at most 15 a day, shared across
+   all runs that day). Keywords rotate round-robin across days; `order` alternates between
+   `viewCount` and `date` and flips daily, so each keyword sees both. One page, no paging.
+2. **Enrich:** `videos.list` and `channels.list` in batches of 50 for views, duration,
+   subscribers and uploads. Channel stats are cached for 7 days.
+3. **Filter:** every candidate is kept or gets a reason: `not_short`, `curated_channel`,
+   `channel_rejected` / `channel_blocked`, `subscribers_hidden`, `too_few_subscribers` /
+   `too_many_subscribers` (window 1,000–100,000), `too_few_uploads` (< 5), `too_few_views`
+   (< 5,000), `low_views_per_subscriber` (< 2.0), `likely_repost` (same title as an earlier
+   video from another channel; the earliest copy survives).
+4. **Rank:** `outlier_score = views / subscribers`; one video per channel per day; at most 20.
+
+`discover --dry-run` makes the real calls (so it spends real quota and counts toward the
+daily search cap) but saves nothing and leaves the keyword rotation alone. Both modes print a
+report and write every candidate with its numbers and reason to
+`output/discovery-YYYY-MM-DD[-dryrun].csv`. Discovery failing never affects the curated run.
 
 ## Data model
 
@@ -168,7 +191,7 @@ Example item from the first real digest (12 Nov 2026, 8 picked from 23 Shorts ac
 5. ✅ Dedup, ranking, Markdown/CSV digest
 6. ✅ Quota guard + reliability — retries, resume, run summary, `quota` command
 7. ✅ `resolve-channels` — channel names → IDs, confirmed one by one
-8. Discovery part 1 — capped keyword search for small, rising creators (dry-run first)
+8. ✅ Discovery part 1 — capped keyword search for small, rising creators (dry-run first)
 9. Discovery part 2 — "New voices" digest section, channel promotion flow
 10. Daily GitHub Actions run + email
 11. Evaluation against 30 hand-scored Shorts

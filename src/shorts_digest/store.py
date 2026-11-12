@@ -106,6 +106,50 @@ MIGRATIONS: list[str] = [
     ALTER TABLE runs ADD COLUMN stage TEXT;
     ALTER TABLE runs ADD COLUMN summary TEXT;
     """,
+    # 5: phase 8 - discovery (search -> enrich -> filter -> rank); see CLAUDE.md section 6a
+    """
+    CREATE TABLE discovered_channels (
+        channel_id        TEXT PRIMARY KEY,
+        title             TEXT,
+        handle            TEXT,
+        subscribers       INTEGER,      -- NULL = hidden
+        video_count       INTEGER,
+        stats_fetched_at  TEXT,
+        status            TEXT NOT NULL DEFAULT 'candidate',
+                          -- candidate | suggested | approved | rejected | blocked
+        topic             TEXT,
+        status_changed_at TEXT,
+        last_suggested_at TEXT
+    );
+    CREATE TABLE discovery_candidates (
+        video_id         TEXT PRIMARY KEY,
+        channel_id       TEXT NOT NULL,
+        keyword          TEXT,
+        search_order     TEXT,
+        title            TEXT,
+        published_at     TEXT,
+        duration_seconds INTEGER,
+        views            INTEGER,
+        subscribers      INTEGER,
+        outlier_score    REAL,
+        drop_reason      TEXT,          -- NULL = kept
+        found_at         TEXT NOT NULL
+    );
+    CREATE INDEX idx_candidates_found ON discovery_candidates(found_at);
+    CREATE TABLE discovery_searches (
+        searched_at  TEXT NOT NULL,
+        quota_day    TEXT NOT NULL,
+        keyword      TEXT NOT NULL,
+        search_order TEXT NOT NULL,
+        results      INTEGER NOT NULL,
+        units        INTEGER NOT NULL,
+        dry_run      INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE discovery_state (
+        key   TEXT PRIMARY KEY,
+        value TEXT
+    );
+    """,
 ]
 
 
@@ -486,4 +530,136 @@ def record_digest(conn: sqlite3.Connection, run_id: int, ranked: list[tuple[str,
         conn.executemany(
             "INSERT OR IGNORE INTO digest_items (run_id, video_id, rank) VALUES (?, ?, ?)",
             [(run_id, vid, rank) for vid, rank in ranked],
+        )
+
+
+# --- discovery ---------------------------------------------------------------------
+
+
+def get_state(conn: sqlite3.Connection, key: str, default: str | None = None) -> str | None:
+    row = conn.execute("SELECT value FROM discovery_state WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_state(conn: sqlite3.Connection, key: str, value: str) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO discovery_state (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def log_search(
+    conn: sqlite3.Connection,
+    quota_day: str,
+    keyword: str,
+    order: str,
+    results: int,
+    units: int,
+    dry_run: bool,
+) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO discovery_searches VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (now_iso(), quota_day, keyword, order, results, units, int(dry_run)),
+        )
+
+
+def searches_on(conn: sqlite3.Connection, quota_day: str) -> int:
+    """Searches already made on this quota day (dry runs too: they spent real quota)."""
+    return conn.execute(
+        "SELECT count(*) FROM discovery_searches WHERE quota_day = ?", (quota_day,)
+    ).fetchone()[0]
+
+
+def discovered_channel_rows(conn: sqlite3.Connection, ids: Iterable[str]) -> dict[str, sqlite3.Row]:
+    ids = list(ids)
+    out: dict[str, sqlite3.Row] = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        marks = ",".join("?" * len(chunk))
+        for r in conn.execute(
+            f"SELECT * FROM discovered_channels WHERE channel_id IN ({marks})", chunk
+        ):
+            out[r["channel_id"]] = r
+    return out
+
+
+def upsert_discovered_channel(
+    conn: sqlite3.Connection,
+    channel_id: str,
+    title: str,
+    handle: str | None,
+    subscribers: int | None,
+    video_count: int | None,
+) -> None:
+    """Refresh a channel's stats. Never touches its status (that is the owner's)."""
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO discovered_channels
+                (channel_id, title, handle, subscribers, video_count, stats_fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET title = excluded.title,
+                handle = excluded.handle, subscribers = excluded.subscribers,
+                video_count = excluded.video_count, stats_fetched_at = excluded.stats_fetched_at
+            """,
+            (channel_id, title, handle, subscribers, video_count, now_iso()),
+        )
+
+
+def seen_candidate_ids(conn: sqlite3.Connection, video_ids: Iterable[str]) -> set[str]:
+    """Video IDs already judged by discovery, or already stored as curated videos."""
+    ids = list(video_ids)
+    seen: set[str] = set()
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        marks = ",".join("?" * len(chunk))
+        for table in ("discovery_candidates", "videos"):
+            rows = conn.execute(f"SELECT video_id FROM {table} WHERE video_id IN ({marks})", chunk)
+            seen.update(r["video_id"] for r in rows)
+    return seen
+
+
+def recent_titles(conn: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
+    """(title, channel_id, published_at) of curated videos and discovery candidates since
+    ``since``: what a new candidate is compared with to spot reposts."""
+    return conn.execute(
+        """
+        SELECT title, channel_id, published_at FROM videos WHERE published_at >= ?
+        UNION ALL
+        SELECT title, channel_id, published_at FROM discovery_candidates WHERE published_at >= ?
+        """,
+        (since, since),
+    ).fetchall()
+
+
+def channels_kept_since(conn: sqlite3.Connection, since: str) -> set[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT channel_id FROM discovery_candidates "
+        "WHERE drop_reason IS NULL AND found_at >= ?",
+        (since,),
+    )
+    return {r["channel_id"] for r in rows}
+
+
+def kept_count_since(conn: sqlite3.Connection, since: str) -> int:
+    return conn.execute(
+        "SELECT count(*) FROM discovery_candidates WHERE drop_reason IS NULL AND found_at >= ?",
+        (since,),
+    ).fetchone()[0]
+
+
+def save_candidates(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    with conn:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO discovery_candidates (video_id, channel_id, keyword,
+                search_order, title, published_at, duration_seconds, views, subscribers,
+                outlier_score, drop_reason, found_at)
+            VALUES (:video_id, :channel_id, :keyword, :search_order, :title, :published_at,
+                :duration_seconds, :views, :subscribers, :outlier_score, :drop_reason, :found_at)
+            """,
+            rows,
         )

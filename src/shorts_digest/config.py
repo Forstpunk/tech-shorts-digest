@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -80,6 +81,35 @@ class QuotaConfig(_Strict):
         return self
 
 
+class DiscoveryConfig(_Strict):
+    """Capped daily keyword search for small, rising creators (CLAUDE.md section 6a)."""
+
+    enabled: bool = False
+    # search.list costs 100 units each; CLAUDE.md caps discovery at 15 a day.
+    max_searches_per_day: int = Field(default=15, ge=0, le=15)
+    lookback_days: int = Field(default=7, gt=0, le=30)
+    relevance_language: str = "en"
+    safe_search: Literal["none", "moderate", "strict"] = "moderate"
+    min_subscribers: int = Field(default=1000, ge=0)
+    max_subscribers: int = Field(default=100_000, gt=0)
+    min_uploads: int = Field(default=5, ge=0)
+    min_views: int = Field(default=5000, ge=0)
+    min_views_per_subscriber: float = Field(default=2.0, ge=0)
+    max_candidates_per_day: int = Field(default=20, gt=0)
+    channel_stats_cache_days: int = Field(default=7, gt=0)
+    keywords: list[str] = []
+
+    @model_validator(mode="after")
+    def _sane(self) -> DiscoveryConfig:
+        if self.min_subscribers > self.max_subscribers:
+            raise ValueError("min_subscribers cannot be larger than max_subscribers")
+        if self.enabled and not self.keywords:
+            raise ValueError("discovery is enabled but has no keywords")
+        if len(set(k.lower() for k in self.keywords)) != len(self.keywords):
+            raise ValueError("discovery keywords contain a duplicate")
+        return self
+
+
 class Settings(_Strict):
     lookback_days: int = Field(gt=0)
     max_short_seconds: int = Field(gt=0)
@@ -88,6 +118,7 @@ class Settings(_Strict):
     digest_size: int = Field(gt=0)
     max_per_topic: int = Field(gt=0)
     quota: QuotaConfig = QuotaConfig()
+    discovery: DiscoveryConfig = DiscoveryConfig()
     email: EmailConfig = EmailConfig()
 
 
