@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httplib2
 from googleapiclient.errors import HttpError
 
 from shorts_digest import store
@@ -22,7 +23,7 @@ from shorts_digest.shorts import check_shorts_url, is_short_by_duration, parse_d
 from shorts_digest.transcripts import TextResult, Throttle, fetch_text
 from shorts_digest.youtube import (
     PlaylistItem,
-    QuotaTracker,
+    Quota,
     fetch_video_details,
     list_recent_uploads,
     resolve_uploads_playlists,
@@ -54,7 +55,7 @@ def fetch_stage(
     cfg: AppConfig,
     conn: sqlite3.Connection,
     client: Any,
-    quota: QuotaTracker,
+    quota: Quota,
     limit: int | None = None,
     now: datetime | None = None,
 ) -> FetchResult:
@@ -89,6 +90,9 @@ def fetch_stage(
             discovered.extend(list_recent_uploads(client, pid, since, quota))
         except HttpError as err:  # fatal errors (quota/key) are not HttpError; they propagate
             log.warning("Skipping channel %s: HTTP %s", cid, err.status_code)
+            result.channels_failed += 1
+        except (OSError, httplib2.HttpLib2Error) as err:  # network still down after retries
+            log.warning("Skipping channel %s: %s", cid, type(err).__name__)
             result.channels_failed += 1
 
     # 3. Only look up videos we haven't stored before (saves quota, keeps reruns idempotent).

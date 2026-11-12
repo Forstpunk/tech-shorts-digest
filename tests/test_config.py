@@ -98,3 +98,13 @@ def test_env_require_names_missing_keys_without_values():
         env.require("SMTP_HOST")
     assert "secret-value" not in str(exc.value)
     assert "secret-value" not in repr(env)
+
+
+def test_quota_defaults_and_reserve_check(tmp_path):
+    write_config(tmp_path)
+    q = load(tmp_path).settings.quota
+    assert (q.daily_limit, q.curated_reserve) == (6000, 500)  # defaults when the block is absent
+
+    write_config(tmp_path, SETTINGS + "quota: {daily_limit: 100, curated_reserve: 200}\n")
+    with pytest.raises(ConfigError, match="curated_reserve"):
+        load(tmp_path)

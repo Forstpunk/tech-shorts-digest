@@ -177,3 +177,14 @@ def test_build_digest_respects_window(tmp_path):
     filter_stage(conn, 3, now=NOW)
     later = datetime(2026, 12, 1, tzinfo=UTC)
     assert build_digest(conn, 8, 3, days=7, exclude_digested=False, now=later).items == []
+
+
+def test_recorded_runs_do_not_overwrite_same_day_digest(tmp_path):
+
+    d = Digest(date(2026, 11, 12), [], 0, 0)
+    first, _ = write_outputs(d, tmp_path, overwrite=False)
+    second, csv2 = write_outputs(d, tmp_path, overwrite=False)
+    rebuilt, _ = write_outputs(d, tmp_path)  # digest --days N rebuilds in place
+    assert first.name == "digest-2026-11-12.md"
+    assert (second.name, csv2.name) == ("digest-2026-11-12-2.md", "digest-2026-11-12-2.csv")
+    assert rebuilt == first

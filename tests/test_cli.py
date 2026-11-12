@@ -29,7 +29,7 @@ def test_help_exits_cleanly(capsys):
 
 @pytest.mark.parametrize(
     "argv",
-    [["extract"], ["text"], ["digest", "--days", "7"], ["discover-channels", "data engineering"]],
+    [["extract"], ["text"], ["digest", "--days", "7"], ["quota"], ["resolve-channels"]],
 )
 def test_commands_exit_zero_on_empty_db(argv):
     assert main(argv) == 0

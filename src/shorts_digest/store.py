@@ -93,6 +93,19 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE extractions ADD COLUMN reasons TEXT;
     """,
+    # 4: phase 6 - per-day quota ledger; which stage a failed run died in; stage counts
+    """
+    CREATE TABLE quota_usage (
+        day    TEXT NOT NULL,            -- quota day, YYYY-MM-DD in Pacific time
+        source TEXT NOT NULL,            -- curated | discovery | resolve
+        method TEXT NOT NULL,            -- e.g. playlistItems.list
+        calls  INTEGER NOT NULL DEFAULT 0,
+        units  INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, source, method)
+    );
+    ALTER TABLE runs ADD COLUMN stage TEXT;
+    ALTER TABLE runs ADD COLUMN summary TEXT;
+    """,
 ]
 
 
@@ -234,16 +247,77 @@ def finish_run(
     shorts_kept: int = 0,
     quota_estimate: int = 0,
     error: str | None = None,
+    stage: str | None = None,
+    summary: dict | None = None,
 ) -> None:
+    """Close a run. ``stage`` = where a failed run stopped; ``summary`` = per-stage counts."""
+    import json
+
     with conn:
         conn.execute(
             """
             UPDATE runs SET finished_at = ?, status = ?, videos_found = ?, shorts_kept = ?,
-                quota_estimate = ?, error = ?
+                quota_estimate = ?, error = ?, stage = ?, summary = ?
             WHERE run_id = ?
             """,
-            (now_iso(), status, videos_found, shorts_kept, quota_estimate, error, run_id),
+            (
+                now_iso(),
+                status,
+                videos_found,
+                shorts_kept,
+                quota_estimate,
+                error,
+                stage,
+                json.dumps(summary) if summary is not None else None,
+                run_id,
+            ),
         )
+
+
+def mark_interrupted_runs(conn: sqlite3.Connection) -> int:
+    """Close runs left as 'running' by a crash, Ctrl-C or a cancelled CI job.
+
+    Call this only when starting a new run (the daily job never runs twice at once).
+    Their work is not lost: every video keeps its status, so the new run carries on.
+    """
+    with conn:
+        cur = conn.execute(
+            "UPDATE runs SET status = 'failed', error = 'interrupted', finished_at = ? "
+            "WHERE status = 'running'",
+            (now_iso(),),
+        )
+    return cur.rowcount
+
+
+# --- quota -------------------------------------------------------------------------
+
+
+def add_quota_usage(conn: sqlite3.Connection, day: str, source: str, method: str, units: int):
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO quota_usage (day, source, method, calls, units) VALUES (?, ?, ?, 1, ?)
+            ON CONFLICT(day, source, method)
+            DO UPDATE SET calls = calls + 1, units = units + excluded.units
+            """,
+            (day, source, method, units),
+        )
+
+
+def quota_used(conn: sqlite3.Connection, day: str, source: str | None = None) -> int:
+    sql, params = "SELECT coalesce(sum(units), 0) FROM quota_usage WHERE day = ?", [day]
+    if source is not None:
+        sql += " AND source = ?"
+        params.append(source)
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def quota_breakdown(conn: sqlite3.Connection, day: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT source, method, calls, units FROM quota_usage WHERE day = ? "
+        "ORDER BY source, units DESC",
+        (day,),
+    ).fetchall()
 
 
 def last_successful_fetch(conn: sqlite3.Connection) -> datetime | None:

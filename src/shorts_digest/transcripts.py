@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 PREFERRED_LANGUAGES = ["en", "en-US", "en-GB", "en-IN", "hi"]
 MAX_TRANSCRIPT_CHARS = 4000  # Shorts are short; this also keeps the DB small
 MIN_TRANSCRIPT_WORDS = 8  # fewer words than this is usually music lyrics or "[Music]"
+NETWORK_RETRY_PAUSE = 2.0  # seconds before the single retry after a network error
+_sleep = time.sleep  # tests swap this out
 # Caption noise: "[Music]" / "[Applause]" tags and ">>" speaker-change markers.
 _NOISE_RE = re.compile(r"\[[^\]]*\]|>>")
 
@@ -59,13 +61,14 @@ def fetch_text(video_id: str, api: Any | None = None) -> TextResult:
     """Try the transcript; on any failure return a metadata result with the reason."""
     api = api or YouTubeTranscriptApi()
     try:
-        transcript = _pick_transcript(api.list(video_id))
-        fetched = transcript.fetch()
+        transcript, fetched = _fetch_with_retry(api, video_id)
     except (RequestBlocked, IpBlocked):
         return TextResult("metadata", None, error="blocked", blocked=True)
     except CouldNotRetrieveTranscript as exc:
         # e.g. TranscriptsDisabled, NoTranscriptFound, VideoUnavailable, AgeRestricted
         return TextResult("metadata", None, error=type(exc).__name__)
+    except OSError as exc:  # network trouble that survived one retry
+        return TextResult("metadata", None, error=f"network:{type(exc).__name__}")
     except Exception as exc:  # the library is unofficial; never let it crash the run
         log.warning("Transcript for %s failed unexpectedly: %r", video_id, exc)
         return TextResult("metadata", None, error=f"unexpected:{type(exc).__name__}")
@@ -74,6 +77,21 @@ def fetch_text(video_id: str, api: Any | None = None) -> TextResult:
     if len(text.split()) < MIN_TRANSCRIPT_WORDS:
         return TextResult("metadata", None, language=transcript.language_code, error="too_short")
     return TextResult("transcript", text, language=transcript.language_code)
+
+
+def _fetch_with_retry(api: Any, video_id: str) -> tuple[Any, Any]:
+    """List + fetch, retrying once on a network error (requests' errors are OSErrors).
+
+    Blocks and "no transcript" answers are not retried: asking again won't change them.
+    """
+    try:
+        transcript = _pick_transcript(api.list(video_id))
+        return transcript, transcript.fetch()
+    except OSError as exc:
+        log.info("Transcript for %s: %s, retrying once", video_id, type(exc).__name__)
+        _sleep(NETWORK_RETRY_PAUSE)
+        transcript = _pick_transcript(api.list(video_id))
+        return transcript, transcript.fetch()
 
 
 def clean_caption_text(lines: Any) -> str:

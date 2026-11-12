@@ -5,5 +5,8 @@ min_usefulness: 3         # drop items scored below this (1-5)
 digest_size: 8
 max_per_topic: 3
 # Concept extraction is rule-based (no LLM); vocabulary and signals live in config/terms.yaml.
+quota:
+  daily_limit: 6000       # our own ceiling per day (Google's is 10,000); calls past it are refused
+  curated_reserve: 500    # kept back for the curated fetch; discovery spends only what is left
 email:
   enabled: false

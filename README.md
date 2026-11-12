@@ -5,8 +5,9 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, pulls
 each one teaches with a transparent rule-based extractor (no LLM, no AI API keys), filters out ads
 and fluff, and produces a 5–10 item "what to learn next" digest with links.
 
-> **Status:** Phase 5 of 8 — the full pipeline runs end to end and writes a daily digest
-> (`output/digest-YYYY-MM-DD.md` + `.csv`). Next: reliability, then GitHub Actions.
+> **Status:** Phase 6 of 11 — the curated pipeline runs end to end with a quota guard,
+> retries and resume-after-failure, and writes a daily digest (`output/digest-YYYY-MM-DD.md`
+> + `.csv`). Next: a channel-name resolver, then discovery of small creators.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -36,26 +37,52 @@ Add channels to `config/channels.yaml` (real channel IDs start with `UC`). Tune 
 
 ```bash
 python -m shorts_digest run                  # full pipeline
-python -m shorts_digest run --dry-run        # no email, prints plan
-python -m shorts_digest fetch                # discovery + classify only
+python -m shorts_digest run --dry-run        # print the plan: no API calls, nothing written
+python -m shorts_digest run --limit 5        # process at most 5 new videos
+python -m shorts_digest fetch                # find new uploads + classify Shorts only
 python -m shorts_digest text                 # transcripts for stored Shorts
 python -m shorts_digest extract              # concept extraction on stored Shorts
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
-python -m shorts_digest discover-channels "data engineering"
+python -m shorts_digest quota                # today's API quota use, by source and method
 
 pytest -q
 ruff check . && ruff format .
 ```
 
-All commands are live except `discover-channels` (not needed: channel IDs are already resolved).
-`run` = fetch → text → extract → filter → digest.
+`run` = fetch → text → extract → filter → digest, and ends with one summary line:
+
+```
+Run 4 success: found=0 kept=0 text=0 (transcript 0) extracted=0 accepted=0 rejected=0 digest=4 quota=29 units (curated 29, today 29/6000)
+```
 
 ## Quota
 
 A daily run costs about **30 of 10,000** YouTube API units: one `playlistItems.list` per channel
 plus one `videos.list` per 50 new videos. Each channel's uploads playlist ID is looked up once
-and cached in SQLite. `search.list` (100 units) is never used in the daily run. Every run logs
-its estimate and stores it in the `runs` table.
+and cached in SQLite. `search.list` (100 units) is never used by the curated pipeline.
+
+Every API call goes through one **quota guard** (`quota.py`):
+
+- it knows each method's cost and keeps a per-day ledger in the `quota_usage` table, so several
+  runs on one day add up (the day follows Pacific time, when Google resets the quota);
+- it refuses a call *before* sending it if today's total would pass `quota.daily_limit`
+  (6,000 by default, well under Google's 10,000), so a bug can't burn the whole day;
+- `quota.curated_reserve` (500) is kept back for the curated fetch: the planned discovery job
+  can only spend what is left.
+
+## Reliability
+
+- **Retries:** HTTP 429/5xx, "rate limit" answers and network drops are retried up to 3 times
+  (2 s, then 4 s pauses), and each attempt counts against quota. A bad key or exhausted quota
+  stops the run at once. A transcript network error is retried once, then falls back.
+- **Fail soft per item, loud per run:** one broken channel or video is logged and skipped. A crash
+  in any stage is written to the `runs` row (`status = failed`, `stage`, `error`) and the
+  command exits non-zero.
+- **Resume:** every video's progress is saved as it moves `new → text_ready → extracted →
+  accepted/rejected`, so the next run simply carries on. A run killed mid-way (Ctrl-C, a cancelled
+  CI job) is left as `running`; the next run marks it `failed: interrupted`.
+- **No overwrites:** a second run on the same day writes `digest-YYYY-MM-DD-2.md` instead of
+  replacing the digest already produced.
 
 ## Data model
 
@@ -119,9 +146,12 @@ Example item from the first real digest (12 Nov 2026, 8 picked from 23 Shorts ac
 3. ✅ Transcripts with fallback to title + description
 4. ✅ Concept extraction (rule-based, no LLM)
 5. ✅ Dedup, ranking, Markdown/CSV digest
-6. Reliability — retries, resume, quota logging
-7. Daily GitHub Actions run + email
-8. Evaluation against 30 hand-scored Shorts
+6. ✅ Quota guard + reliability — retries, resume, run summary, `quota` command
+7. `resolve-channels` — channel names → IDs, confirmed one by one
+8. Discovery part 1 — capped keyword search for small, rising creators (dry-run first)
+9. Discovery part 2 — "New voices" digest section, channel promotion flow
+10. Daily GitHub Actions run + email
+11. Evaluation against 30 hand-scored Shorts
 
 ## Known limitations
 

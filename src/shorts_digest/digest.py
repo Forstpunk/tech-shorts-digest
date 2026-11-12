@@ -131,10 +131,18 @@ def render_markdown(digest: Digest) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_outputs(digest: Digest, output_dir: Path | None = None) -> tuple[Path, Path]:
+def write_outputs(
+    digest: Digest, output_dir: Path | None = None, overwrite: bool = True
+) -> tuple[Path, Path]:
+    """Write digest-YYYY-MM-DD.md/.csv. With ``overwrite=False`` (recorded runs) a second
+    run on the same day writes digest-YYYY-MM-DD-2.md instead of replacing what was sent."""
     output_dir = output_dir or DEFAULT_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"digest-{digest.day.isoformat()}"
+    n = 1
+    while not overwrite and (output_dir / f"{stem}.md").exists():
+        n += 1
+        stem = f"digest-{digest.day.isoformat()}-{n}"
     md_path, csv_path = output_dir / f"{stem}.md", output_dir / f"{stem}.csv"
     md_path.write_text(render_markdown(digest), encoding="utf-8")
     with csv_path.open("w", newline="", encoding="utf-8") as f:

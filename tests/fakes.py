@@ -21,20 +21,24 @@ def http_error(status: int, reason: str = "") -> HttpError:
 
 
 class _Request:
-    def __init__(self, fn, kwargs):
-        self._fn, self._kwargs = fn, kwargs
+    def __init__(self, fn, kwargs, pending_failures, log, name):
+        self._fn, self._kwargs, self._failures = fn, kwargs, pending_failures
+        self._log, self._name = log, name
 
     def execute(self, num_retries: int = 0):
+        self._log.append((self._name, self._kwargs))  # one entry per attempt
+        if self._failures:  # injected errors are raised first, one per attempt
+            raise self._failures.pop(0)
         return self._fn(**self._kwargs)
 
 
 class _Resource:
-    def __init__(self, fn, log, name):
-        self._fn, self._log, self._name = fn, log, name
+    def __init__(self, fn, log, name, failures):
+        self._fn, self._log, self._name, self._failures = fn, log, name, failures
 
     def list(self, **kwargs):
-        self._log.append((self._name, kwargs))
-        return _Request(self._fn, kwargs)
+        failures = self._failures.setdefault(self._name, [])
+        return _Request(self._fn, kwargs, failures, self._log, self._name)
 
 
 class FakeYouTube:
@@ -42,6 +46,7 @@ class FakeYouTube:
     channels:  {channel_id: uploads_playlist_id}
     playlists: {playlist_id: [ {videoId, videoPublishedAt}, ... ] newest first} or an Exception
     videos:    {video_id: {channelId, title, duration, publishedAt}}
+    failures:  {"videos.list": [exc, exc]} - raised on the next attempts of that method
     """
 
     def __init__(self, channels=None, playlists=None, videos=None, page_size=50):
@@ -50,6 +55,7 @@ class FakeYouTube:
         self.videos_data = videos or {}
         self.page_size = page_size
         self.calls: list[tuple[str, dict]] = []
+        self.failures: dict[str, list[Exception]] = {}
 
     def channels(self):
         def fn(id, **_):
@@ -63,7 +69,7 @@ class FakeYouTube:
             ]
             return {"items": items}
 
-        return _Resource(fn, self.calls, "channels.list")
+        return _Resource(fn, self.calls, "channels.list", self.failures)
 
     def playlistItems(self):
         def fn(playlistId, pageToken=None, **_):
@@ -77,7 +83,7 @@ class FakeYouTube:
                 resp["nextPageToken"] = str(start + self.page_size)
             return resp
 
-        return _Resource(fn, self.calls, "playlistItems.list")
+        return _Resource(fn, self.calls, "playlistItems.list", self.failures)
 
     def videos(self):
         def fn(id, **_):
@@ -99,7 +105,13 @@ class FakeYouTube:
                     )
             return {"items": items}
 
-        return _Resource(fn, self.calls, "videos.list")
+        return _Resource(fn, self.calls, "videos.list", self.failures)
 
-    def count(self, method: str) -> int:
+    def count(self, method: str) -> int:  # attempts, including retried ones
         return sum(1 for name, _ in self.calls if name == method)
+
+
+def make_guard(conn, daily_limit: int = 6000, source: str = "curated", reserve: int = 500):
+    from shorts_digest.quota import QuotaGuard
+
+    return QuotaGuard(conn, source, daily_limit, reserve)

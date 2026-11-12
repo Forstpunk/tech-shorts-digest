@@ -67,6 +67,19 @@ class EmailConfig(_Strict):
     enabled: bool = False
 
 
+class QuotaConfig(_Strict):
+    # Our own ceiling, below Google's 10,000/day, so a bug can't burn the whole quota.
+    daily_limit: int = Field(default=6000, gt=0, le=10000)
+    # Units kept back for the curated fetch; discovery only spends what is left.
+    curated_reserve: int = Field(default=500, ge=0)
+
+    @model_validator(mode="after")
+    def _reserve_fits(self) -> QuotaConfig:
+        if self.curated_reserve > self.daily_limit:
+            raise ValueError("curated_reserve cannot be larger than daily_limit")
+        return self
+
+
 class Settings(_Strict):
     lookback_days: int = Field(gt=0)
     max_short_seconds: int = Field(gt=0)
@@ -74,6 +87,7 @@ class Settings(_Strict):
     min_usefulness: int = Field(ge=1, le=5)
     digest_size: int = Field(gt=0)
     max_per_topic: int = Field(gt=0)
+    quota: QuotaConfig = QuotaConfig()
     email: EmailConfig = EmailConfig()
 
 

@@ -4,12 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from fakes import CH_A, CH_B, FakeYouTube, http_error
+from fakes import CH_A, CH_B, FakeYouTube, http_error, make_guard
 
 from shorts_digest import store
 from shorts_digest.config import load_config
 from shorts_digest.pipeline import fetch_stage
-from shorts_digest.youtube import QuotaTracker, YouTubeFatalError
+from shorts_digest.youtube import YouTubeFatalError
 
 NOW = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
 REAL_CONFIG = Path(__file__).resolve().parents[1] / "config"
@@ -66,7 +66,7 @@ def statuses(conn):
 
 
 def test_first_run_classifies_and_stores(cfg, conn):
-    yt, quota = make_fake(), QuotaTracker()
+    yt, quota = make_fake(), make_guard(conn)
     result = fetch_stage(cfg, conn, yt, quota, now=NOW)
 
     assert result.videos_found == 3 and result.shorts_kept == 2 and result.complete
@@ -86,16 +86,16 @@ def test_first_run_classifies_and_stores(cfg, conn):
 
 
 def test_second_run_uses_cache_and_skips_known_videos(cfg, conn):
-    fetch_stage(cfg, conn, make_fake(), QuotaTracker(), now=NOW)
+    fetch_stage(cfg, conn, make_fake(), make_guard(conn), now=NOW)
     yt = make_fake()
-    result = fetch_stage(cfg, conn, yt, QuotaTracker(), now=NOW)
+    result = fetch_stage(cfg, conn, yt, make_guard(conn), now=NOW)
     assert result.videos_found == 0
     assert yt.count("channels.list") == 0  # playlist IDs came from SQLite
     assert yt.count("videos.list") == 0  # nothing new to look up
 
 
 def test_limit_marks_run_incomplete(cfg, conn):
-    result = fetch_stage(cfg, conn, make_fake(), QuotaTracker(), limit=1, now=NOW)
+    result = fetch_stage(cfg, conn, make_fake(), make_guard(conn), limit=1, now=NOW)
     assert result.videos_found == 3 and not result.complete
     assert list(statuses(conn)) == ["b_short"]  # newest first
 
@@ -103,7 +103,7 @@ def test_limit_marks_run_incomplete(cfg, conn):
 def test_one_broken_channel_does_not_stop_the_run(cfg, conn):
     yt = make_fake()
     yt.playlists_data["UUa"] = http_error(404, "playlistNotFound")
-    result = fetch_stage(cfg, conn, yt, QuotaTracker(), now=NOW)
+    result = fetch_stage(cfg, conn, yt, make_guard(conn), now=NOW)
     assert result.channels_failed == 1
     assert list(statuses(conn)) == ["b_short"]
 
@@ -112,7 +112,7 @@ def test_quota_exceeded_fails_the_run(cfg, conn):
     yt = make_fake()
     yt.playlists_data["UUa"] = http_error(403, "quotaExceeded")
     with pytest.raises(YouTubeFatalError, match="quotaExceeded"):
-        fetch_stage(cfg, conn, yt, QuotaTracker(), now=NOW)
+        fetch_stage(cfg, conn, yt, make_guard(conn), now=NOW)
 
 
 def test_paging_stops_at_first_older_video(cfg, conn):
@@ -123,7 +123,7 @@ def test_paging_stops_at_first_older_video(cfg, conn):
     yt.page_size = 2  # forces paging: [r0,r1] [r2,o0] -> stop
     for v in recent + older:
         yt.videos_data[v["videoId"]] = vid(CH_A, "PT20S")
-    fetch_stage(cfg, conn, yt, QuotaTracker(), now=NOW)
+    fetch_stage(cfg, conn, yt, make_guard(conn), now=NOW)
     pages_a = [
         kw for name, kw in yt.calls if name == "playlistItems.list" and kw["playlistId"] == "UUa"
     ]
@@ -137,5 +137,5 @@ def test_lookback_starts_from_last_successful_run(cfg, conn):
     conn.execute("UPDATE runs SET started_at = '2026-11-12T00:00:00+00:00'")
     conn.commit()
     # since = 2026-11-11T18:00 (6h overlap): only b_short (11-12 08:00) is recent enough
-    fetch_stage(cfg, conn, make_fake(), QuotaTracker(), now=NOW)
+    fetch_stage(cfg, conn, make_fake(), make_guard(conn), now=NOW)
     assert set(statuses(conn)) == {"b_short"}
