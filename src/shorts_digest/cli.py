@@ -73,17 +73,33 @@ def _text(limit: int | None) -> int:
     return 0
 
 
+def _extract(cfg: AppConfig, limit: int | None) -> int:
+    from shorts_digest.pipeline import extract_stage
+
+    conn = store.connect()
+    r = extract_stage(conn, cfg.channels.topic_names, limit)
+    log.info(
+        "Extract stage: extracted=%d failed=%d usefulness=%s",
+        r.processed,
+        r.failed,
+        dict(sorted(r.by_score.items())),
+    )
+    return 0
+
+
 def _not_implemented(stage: str, phase: int) -> int:
     log.info("'%s' is not implemented yet (planned for phase %d).", stage, phase)
     return 0
 
 
 def cmd_run(cfg: AppConfig, args: argparse.Namespace) -> int:
-    # Phases 2-3 exist so far. Later phases add the LLM and digest stages.
+    # Phases 2-4 exist so far. Phase 5 adds filtering and the digest.
     code = _fetch(cfg, "run", args.limit)
     if code == 0:
         code = _text(args.limit)
-        log.info("Stages after text are not implemented yet (phases 4-5).")
+    if code == 0:
+        code = _extract(cfg, args.limit)
+        log.info("Digest stage is not implemented yet (phase 5).")
     return code
 
 
@@ -96,7 +112,7 @@ def cmd_text(cfg: AppConfig, args: argparse.Namespace) -> int:
 
 
 def cmd_extract(cfg: AppConfig, args: argparse.Namespace) -> int:
-    return _not_implemented("extract", 4)
+    return _extract(cfg, args.limit)
 
 
 def cmd_digest(cfg: AppConfig, args: argparse.Namespace) -> int:
@@ -123,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("run", help="full pipeline")
-    p.add_argument("--dry-run", action="store_true", help="no LLM calls, no email; print plan")
+    p.add_argument("--dry-run", action="store_true", help="no email; print plan")
     p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_run)
 
@@ -135,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_text)
 
-    p = sub.add_parser("extract", help="LLM stage on stored, unprocessed videos")
+    p = sub.add_parser("extract", help="concept extraction (rule-based) on stored Shorts")
     p.add_argument("--limit", type=_positive_int, help="process at most N videos")
     p.set_defaults(func=cmd_extract)
 

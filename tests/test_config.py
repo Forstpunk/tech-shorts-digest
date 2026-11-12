@@ -16,10 +16,6 @@ verify_shorts_url: false
 min_usefulness: 3
 digest_size: 8
 max_per_topic: 3
-llm:
-  primary: {provider: gemini, model: test-model}
-  fallback: {provider: groq, model: test-model}
-  requests_per_minute: 10
 email:
   enabled: false
 """
@@ -98,7 +94,7 @@ def test_missing_file_is_reported(tmp_path):
 def test_env_require_names_missing_keys_without_values():
     env = Env({"YOUTUBE_API_KEY": "secret-value"})
     env.require("YOUTUBE_API_KEY")
-    with pytest.raises(ConfigError, match="GEMINI_API_KEY") as exc:
-        env.require("GEMINI_API_KEY")
+    with pytest.raises(ConfigError, match="SMTP_HOST") as exc:
+        env.require("SMTP_HOST")
     assert "secret-value" not in str(exc.value)
     assert "secret-value" not in repr(env)

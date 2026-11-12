@@ -1,0 +1,270 @@
+{
+  "_about": "10 real outputs of the rule-based extractor (rules-v1) on Shorts fetched 2026-11-12. Review: fill owner_score (1-5) and owner_notes. Transcripts are not stored here; open the url to check.",
+  "items": [
+    {
+      "video_id": "Zk-OhFnJjKk",
+      "url": "https://www.youtube.com/shorts/Zk-OhFnJjKk",
+      "channel": "Excel Dictionary",
+      "title": "How to Navigate Excel Without Your Mouse",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "How to Navigate Excel Without Your Mouse",
+        "method_or_tool": "excel, control A",
+        "topic": "productivity",
+        "summary": "Now if you know you want to select the entire data table, just press control A to automatically select the entire range.",
+        "difficulty": "beginner",
+        "usefulness": 5,
+        "confidence": "medium",
+        "next_step": "Search: \"excel tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: excel, control A",
+          "instructional language x19",
+          "names a concrete tool/method and shows how (8/100 words)",
+          "specific steps: control A"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "f4HJf7w2ci4",
+      "url": "https://www.youtube.com/shorts/f4HJf7w2ci4",
+      "channel": "Excel Dictionary",
+      "title": "5 Excel Keyboard Shortcuts Every User Should Know",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "5 Excel Keyboard Shortcuts Every User Should Know",
+        "method_or_tool": "excel, Alt + equals",
+        "topic": "productivity",
+        "summary": "Alt H O I to autofit your columns.",
+        "difficulty": "intermediate",
+        "usefulness": 5,
+        "confidence": "high",
+        "next_step": "Search: \"excel autofit tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: excel, autofit, autosum, formula, Alt + equals, Alt H",
+          "instructional language x6",
+          "names a concrete tool/method and shows how (14/100 words)",
+          "specific steps: Alt + equals, Alt H, Alt W"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "W97nSZQMn0A",
+      "url": "https://www.youtube.com/shorts/W97nSZQMn0A",
+      "channel": "Coding with Lewis",
+      "title": "Reviving 7 Old Computers #ad",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "Reviving 7 Old Computers",
+        "method_or_tool": "linux",
+        "topic": "cloud_devops",
+        "summary": "And at Rouse Herby's agents request to all my idle machines, whether they're Windows, Linux, or Mac.",
+        "difficulty": "beginner",
+        "usefulness": 4,
+        "confidence": "medium",
+        "next_step": "Search: \"linux tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: linux",
+          "instructional language x6",
+          "names a concrete tool/method and shows how (3/100 words)"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "v-2myT8mSTs",
+      "url": "https://www.youtube.com/shorts/v-2myT8mSTs",
+      "channel": "Excel Dictionary",
+      "title": "How to Find Missing Data Between Two Lists in Excel",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "How to Find Missing Data Between Two Lists in Excel",
+        "method_or_tool": "excel",
+        "topic": "productivity",
+        "summary": "Enter this formula to return every customer from the master list that does not appear in the build list.",
+        "difficulty": "intermediate",
+        "usefulness": 4,
+        "confidence": "high",
+        "next_step": "Search: \"excel formula tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: excel, formula",
+          "instructional language x4",
+          "names a concrete tool/method and shows how (5/100 words)"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "bIASLaYaFzQ",
+      "url": "https://www.youtube.com/shorts/bIASLaYaFzQ",
+      "channel": "David Bombal",
+      "title": "Ban AI, Lose Google SEARCH?",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "Ban AI, Lose Google SEARCH?",
+        "method_or_tool": "gemini",
+        "topic": "ai_llm",
+        "summary": "No Gemini AI, no Google search.",
+        "difficulty": "beginner",
+        "usefulness": 3,
+        "confidence": "medium",
+        "next_step": "Search: \"gemini tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: gemini",
+          "instructional language x4"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "wNDn7LuGIvE",
+      "url": "https://www.youtube.com/shorts/wNDn7LuGIvE",
+      "channel": "GitHub",
+      "title": "3D printing a custom microphone stand with GitHub Copilot",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "3D printing a custom microphone stand with GitHub Copilot",
+        "method_or_tool": "github, copilot",
+        "topic": "web_dev",
+        "summary": "And then he said, why not use GitHub Copilot?",
+        "difficulty": "advanced",
+        "usefulness": 3,
+        "confidence": "high",
+        "next_step": "Search: \"github prompt tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: github, copilot, prompt, attention",
+          "instructional language x9"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "bPhW0otxaIg",
+      "url": "https://www.youtube.com/shorts/bPhW0otxaIg",
+      "channel": "Skill Leap AI",
+      "title": "Most People Don't Know ChatGPT Does This Now",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "Most People Don't Know ChatGPT Does This Now",
+        "method_or_tool": "chatgpt",
+        "topic": "ai_llm",
+        "summary": "Then I typed in now turn it into a looping GIF of him waving and here he is waving on a loop and then when I click on the GIF it lets me change the…",
+        "difficulty": "beginner",
+        "usefulness": 2,
+        "confidence": "medium",
+        "next_step": "Search: \"chatgpt tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: chatgpt",
+          "instructional language x4",
+          "hype language x2"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "Mt54ez7xsiI",
+      "url": "https://www.youtube.com/shorts/Mt54ez7xsiI",
+      "channel": "Matt Wolfe",
+      "title": "Fable 5.2 Is Quite Insane!",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "Fable 5.2 Is Quite Insane!",
+        "method_or_tool": "claude, gemini",
+        "topic": "ai_llm",
+        "summary": "Like Google's latest Gemini model still beats it in like a business automation test.",
+        "difficulty": "intermediate",
+        "usefulness": 2,
+        "confidence": "high",
+        "next_step": "Search: \"claude prompt tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: claude, gemini, prompt, automation",
+          "instructional language x5",
+          "hype language x5"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "nXz5fDSfIoA",
+      "url": "https://www.youtube.com/shorts/nXz5fDSfIoA",
+      "channel": "Skill Leap AI",
+      "title": "The Claude Side Most People Never See",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "The Claude Side Most People Never See",
+        "method_or_tool": "claude, claude code",
+        "topic": "ai_llm",
+        "summary": "You could click on Claude code, pick a folder on your computer, paste a prompt, describe what you want, and this will build the entire website in 3D for you.",
+        "difficulty": "intermediate",
+        "usefulness": 1,
+        "confidence": "high",
+        "next_step": "Search: \"claude prompt tutorial\"",
+        "is_promotional": false,
+        "reasons": [
+          "mentions: claude, claude code, prompt",
+          "hype language x2"
+        ]
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    },
+    {
+      "video_id": "Rw2wUeSQ-r4",
+      "url": "https://www.youtube.com/shorts/Rw2wUeSQ-r4",
+      "channel": "David Bombal",
+      "title": "He Let Go of the Wheel in Busy Traffic",
+      "text_source": "transcript",
+      "extraction": {
+        "concept": "He Let Go of the Wheel in Busy Traffic",
+        "method_or_tool": null,
+        "topic": "cloud_devops",
+        "summary": "So now I steered in that scenario, but in this case you can see I let the car drive on its own here, so you can see I won't do anything here.",
+        "difficulty": "beginner",
+        "usefulness": 1,
+        "confidence": "low",
+        "next_step": null,
+        "is_promotional": false,
+        "reasons": []
+      },
+      "model": "rules",
+      "version": "rules-v1",
+      "owner_score": null,
+      "owner_notes": ""
+    }
+  ]
+}

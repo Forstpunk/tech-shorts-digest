@@ -1,4 +1,4 @@
-# Curated channels, grouped by topic. Topic names here are the only topics the LLM may assign.
+# Curated channels, grouped by topic. Topic names here are the only topics the extractor may assign.
 # IDs were resolved from each channel's @handle with the YouTube API (channels.list?forHandle)
 # and checked against the channel title. To add one: channel page -> "Share channel" ->
 # "Copy channel ID" (starts with "UC").

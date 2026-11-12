@@ -1,0 +1,86 @@
+# Vocabulary and signal phrases for the rule-based extractor (no LLM).
+# Edit freely: matching is case-insensitive and on whole words.
+#
+# Per topic:
+#   tools:    products, libraries, commands - concrete things you can install or open
+#   concepts: ideas and techniques
+#   advanced: concepts that mark a Short as "advanced"
+# A term can be a plain string, or {name: ..., aliases: [...]} when it has other spellings.
+# Topic names must match config/channels.yaml.
+
+topics:
+  python:
+    tools: [pandas, numpy, polars, pytest, fastapi, flask, django, pydantic, jupyter, pip, uv,
+            poetry, matplotlib, seaborn, requests, asyncio, dataclasses, itertools, functools,
+            collections, pathlib, f-string, ruff, mypy, venv]
+    concepts: [list comprehension, dictionary comprehension, decorator, generator, iterator,
+               context manager, type hints, lambda, unpacking, walrus operator, recursion,
+               exception handling, virtual environment, slicing, enumerate, zip]
+    advanced: [metaclass, descriptor, gil, coroutine, event loop, monkey patching]
+
+  web_dev:
+    tools: [javascript, typescript, react, next.js, vue, svelte, angular, node.js, bun, deno,
+            vite, tailwind, css, html, npm, git, github, github actions,
+            {name: VS Code, aliases: [vscode, visual studio code]}, copilot, docker, vercel,
+            supabase, firebase, postgres, sqlite, redis, graphql, webassembly, chrome devtools]
+    concepts: [api, rest api, authentication, responsive design, flexbox, css grid, dom, async,
+               promise, closure, state management, server components, pull request, code review,
+               merge conflict, branch, commit, refactoring, debugging, extension, keyboard shortcut]
+    advanced: [hydration, websocket, service worker, memory leak, race condition, monorepo]
+
+  data_engineering:
+    tools: [sql, spark, pyspark, databricks, snowflake, bigquery, airflow, dbt, kafka, duckdb,
+            delta lake, iceberg, parquet, power bi, tableau, looker, excel, postgres, fivetran,
+            dagster, prefect]
+    concepts: [data pipeline, etl, elt, data warehouse, data lake, lakehouse, data modeling,
+               star schema, window function, join, partitioning, data quality, orchestration,
+               batch processing, streaming, cte, group by, normalization, data analyst,
+               data engineer, dashboard, data cleaning]
+    advanced: [slowly changing dimension, change data capture, idempotency, data contract,
+               query optimization, shuffle, skew]
+
+  ai_llm:
+    tools: [chatgpt, claude, gemini, copilot, cursor, ollama, hugging face, langchain, llamaindex,
+            openai api, midjourney, perplexity, notebooklm, claude code, {name: gpt, aliases: [gpt-5]},
+            llama, mistral, stable diffusion]
+    concepts: [prompt, prompt engineering, rag, retrieval augmented generation, ai agent, agent,
+               fine-tuning, embeddings, vector database, context window, token, hallucination,
+               mcp, model context protocol, system prompt, few-shot, chain of thought,
+               observability, evaluation, multimodal]
+    advanced: [lora, quantization, transformer, attention, reinforcement learning, distillation]
+
+  cloud_devops:
+    tools: [aws, azure, gcp, google cloud, kubernetes, docker, terraform, ansible, jenkins,
+            github actions, linux, bash, ssh, nginx, prometheus, grafana, helm, argocd, wireshark,
+            nmap, vpn, cloudflare, ec2, s3, lambda functions]
+    concepts: [ci/cd, container, virtual machine, load balancer, dns, firewall, subnet, ip address,
+               infrastructure as code, monitoring, logging, devops, networking, port, tcp, http,
+               cloud engineer, cybersecurity, encryption, backup]
+    advanced: [service mesh, zero trust, autoscaling, gitops, eBPF, kernel]
+
+  productivity:
+    tools: [excel, google sheets, power query, pivot table, xlookup, vlookup, outlook, onenote,
+            microsoft teams, word, powerpoint, notion, obsidian, google docs, gmail, chrome,
+            microsoft 365, copilot, macro, power automate]
+    concepts: [keyboard shortcut, shortcut, autofill, autofit, autosum, conditional formatting,
+               data validation, formula, filter, sort, template, automation, workflow,
+               focus, time management, note taking]
+    advanced: [vba, lambda function, dynamic array, power pivot, dax]
+
+# Phrases that shape the usefulness score and the promo flag.
+signals:
+  # Instructional language: someone is showing you how to do something.
+  howto: ["how to", "here's how", "use", "using", "type", "press", "hit", "click", "run",
+          "install", "instead of", "step", "first", "then", "select", "open", "add", "set up",
+          "configure", "write", "create", "trick", "tip", "shortcut", "command", "you can"]
+  # Hype / engagement bait: lots of these usually means little to learn.
+  hype: ["insane", "crazy", "coolest", "mind-blowing", "mind blowing", "you won't believe",
+         "game changer", "game-changer", "biggest story", "nobody is talking", "wild", "secret",
+         "most people don't know", "most people never"]
+  # News / opinion rather than a technique.
+  news: ["just released", "announced", "launched", "rolling out", "breaking", "salary",
+         "versus", " vs ", "rumor", "leaked", "opinion", "hot take", "funding", "acquired"]
+  # Ads, course pitches, sponsor reads.
+  promo: ["link in bio", "link in the description", "sign up", "my course", "enroll",
+          "sponsored", "sponsor", "use code", "discount", "promo code", "check out my",
+          "limited time", "free trial", "affiliate", "join my", "newsletter"]

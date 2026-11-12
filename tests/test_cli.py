@@ -9,10 +9,12 @@ from shorts_digest.cli import main
 def no_real_env(monkeypatch, tmp_path):
     """Never read the developer's real .env in tests."""
     import shorts_digest.cli as cli
+    from shorts_digest import store
     from shorts_digest.config import load_config
 
     monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
     monkeypatch.setattr(cli, "load_config", lambda: load_config(env_file=tmp_path / "none.env"))
+    monkeypatch.setattr(store, "DEFAULT_DB_PATH", tmp_path / "test.db")  # never the real DB
 
 
 def test_help_exits_cleanly(capsys):

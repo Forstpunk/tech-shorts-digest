@@ -19,10 +19,10 @@ DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "digest.db"
 
 # Video lifecycle (videos.status):
 #   new               -> a Short, waiting for transcript (phase 3)
-#   text_ready        -> has text, waiting for the LLM (phase 4)
-#   extracted         -> LLM result stored
+#   text_ready        -> has text, waiting for extraction (phase 4)
+#   extracted         -> extraction stored
 #   rejected          -> dropped; see reject_reason (e.g. "not_short", "low_usefulness")
-#   extraction_failed -> LLM output invalid twice
+#   extraction_failed -> extractor raised on this item
 MIGRATIONS: list[str] = [
     # 1: initial schema (CLAUDE.md section 8) + status / reject_reason on videos
     """
@@ -86,6 +86,10 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE videos ADD COLUMN transcript_language TEXT;
     ALTER TABLE videos ADD COLUMN transcript_error TEXT;
+    """,
+    # 3: phase 4 - rule-based extractor explains each score
+    """
+    ALTER TABLE extractions ADD COLUMN reasons TEXT;
     """,
 ]
 
@@ -277,3 +281,53 @@ def save_text(
             """,
             (text_source, transcript, language, error, video_id),
         )
+
+
+def videos_needing_extraction(
+    conn: sqlite3.Connection, limit: int | None = None
+) -> list[sqlite3.Row]:
+    """Shorts with text but no extraction yet, with their channel's topic."""
+    sql = """
+        SELECT v.video_id, v.title, v.description, v.transcript, v.text_source,
+               c.topic AS channel_topic
+        FROM videos v JOIN channels c USING (channel_id)
+        WHERE v.status = 'text_ready'
+        ORDER BY v.published_at DESC
+    """
+    if limit is not None:
+        sql += f" LIMIT {int(limit)}"
+    return conn.execute(sql).fetchall()
+
+
+def save_extraction(
+    conn: sqlite3.Connection, video_id: str, data: dict, model: str, version: str
+) -> None:
+    """Store one extraction and mark the video extracted (one transaction)."""
+    import json
+
+    with conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO extractions (video_id, concept, method_or_tool, topic, summary,
+                difficulty, usefulness, is_promotional, confidence, next_step, model,
+                prompt_version, created_at, reasons)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                video_id,
+                data["concept"],
+                data["method_or_tool"],
+                data["topic"],
+                data["summary"],
+                data["difficulty"],
+                data["usefulness"],
+                int(data["is_promotional"]),
+                data["confidence"],
+                data["next_step"],
+                model,
+                version,
+                now_iso(),
+                json.dumps(data.get("reasons", [])),
+            ),
+        )
+        conn.execute("UPDATE videos SET status = 'extracted' WHERE video_id = ?", (video_id,))

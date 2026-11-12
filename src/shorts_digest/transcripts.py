@@ -83,7 +83,7 @@ def clean_caption_text(lines: Any) -> str:
 
 
 def metadata_text(title: str, description: str) -> str:
-    """The fallback text the LLM sees when there is no usable transcript."""
+    """The fallback text the extractor sees when there is no usable transcript."""
     return f"{title}\n\n{description}".strip()
 
 

@@ -4,10 +4,6 @@ verify_shorts_url: false  # extra check against youtube.com/shorts/<id>; off by 
 min_usefulness: 3         # drop items scored below this (1-5)
 digest_size: 8
 max_per_topic: 3
-llm:
-  # Model names are filled in during Phase 4 from the providers' current docs.
-  primary: {provider: gemini, model: "<set from current docs>"}
-  fallback: {provider: groq, model: "<set from current docs>"}
-  requests_per_minute: 10
+# Concept extraction is rule-based (no LLM); vocabulary and signals live in config/terms.yaml.
 email:
   enabled: false

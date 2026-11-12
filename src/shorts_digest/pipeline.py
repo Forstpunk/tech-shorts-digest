@@ -2,6 +2,7 @@
 
 Phase 2: fetch stage (discover new uploads, classify Shorts, store everything).
 Phase 3: text stage (transcript, or title + description as a fallback).
+Phase 4: extract stage (rule-based concept extraction, no LLM).
 """
 
 from __future__ import annotations
@@ -190,4 +191,40 @@ def text_stage(
             result.metadata += 1
             reason = text.error or "unknown"
             result.errors[reason] = result.errors.get(reason, 0) + 1
+    return result
+
+
+# --- extract stage -----------------------------------------------------------------
+
+
+@dataclass
+class ExtractStageResult:
+    processed: int = 0
+    failed: int = 0
+    by_score: dict[int, int] | None = None
+
+
+def extract_stage(
+    conn: sqlite3.Connection, allowed_topics: list[str], limit: int | None = None, vocab=None
+) -> ExtractStageResult:
+    from shorts_digest.extract import EXTRACTOR_VERSION, VideoText, extract, load_vocabulary
+
+    vocab = vocab or load_vocabulary()
+    result = ExtractStageResult(by_score={})
+    for row in store.videos_needing_extraction(conn, limit):
+        try:
+            item = extract(VideoText(**dict(row)), vocab, allowed_topics)
+        except Exception as exc:  # fail soft per item
+            log.warning("Extraction failed for %s: %r", row["video_id"], exc)
+            with conn:
+                conn.execute(
+                    "UPDATE videos SET status = 'extraction_failed', reject_reason = ? "
+                    "WHERE video_id = ?",
+                    (type(exc).__name__, row["video_id"]),
+                )
+            result.failed += 1
+            continue
+        store.save_extraction(conn, row["video_id"], item.model_dump(), "rules", EXTRACTOR_VERSION)
+        result.processed += 1
+        result.by_score[item.usefulness] = result.by_score.get(item.usefulness, 0) + 1
     return result

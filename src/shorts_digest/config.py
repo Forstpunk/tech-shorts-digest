@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -64,17 +63,6 @@ class ChannelsConfig(_Strict):
 # --- settings.yaml -----------------------------------------------------------------
 
 
-class ProviderConfig(_Strict):
-    provider: Literal["gemini", "groq"]
-    model: str
-
-
-class LLMConfig(_Strict):
-    primary: ProviderConfig
-    fallback: ProviderConfig | None = None
-    requests_per_minute: int = Field(gt=0)
-
-
 class EmailConfig(_Strict):
     enabled: bool = False
 
@@ -86,7 +74,6 @@ class Settings(_Strict):
     min_usefulness: int = Field(ge=1, le=5)
     digest_size: int = Field(gt=0)
     max_per_topic: int = Field(gt=0)
-    llm: LLMConfig
     email: EmailConfig = EmailConfig()
 
 
@@ -94,8 +81,6 @@ class Settings(_Strict):
 
 ENV_KEYS = (
     "YOUTUBE_API_KEY",
-    "GEMINI_API_KEY",
-    "GROQ_API_KEY",
     "SMTP_HOST",
     "SMTP_PORT",
     "SMTP_USER",

@@ -19,7 +19,7 @@ The owner finds short-form feeds distracting. The point of this program is that 
 - YouTube Shorts only, from a curated channel list in `config/channels.yaml`
 - Official YouTube Data API v3 for discovery and metadata
 - Transcript extraction with a fallback to title and description
-- LLM extraction of: concept, method or tool shown, topic tag, usefulness score, one-line summary
+- Rule-based extraction (no LLM, decided 2026-11-12) of: concept, method or tool shown, topic tag, usefulness score, one-line summary
 - Deduplication of videos and of repeated concepts
 - Storage in SQLite
 - Digest output as Markdown and CSV, plus an optional email
@@ -41,7 +41,7 @@ The owner finds short-form feeds distracting. The point of this program is that 
 | Dependencies | `pip` + `venv`, pinned in `requirements.txt` | Keep the list short |
 | YouTube access | `google-api-python-client` | API key only, no OAuth needed for public data |
 | Transcripts | `youtube-transcript-api` | Unofficial; must be wrapped and allowed to fail |
-| LLM | Gemini API free tier (primary), Groq free tier (fallback) | Model names live in config, never hardcoded |
+| Extraction | Rule-based, standard library only (`re`, `collections`) | Vocabulary and signal phrases in `config/terms.yaml`. No LLM and no LLM API keys (owner's decision) |
 | Validation | `pydantic` | For config and LLM output |
 | Storage | SQLite via the standard library `sqlite3` | Single file `data/digest.db` |
 | Config | YAML (`pyyaml`) + `.env` (`python-dotenv`) | |
@@ -50,7 +50,7 @@ The owner finds short-form feeds distracting. The point of this program is that 
 | Tests | `pytest` | Network calls mocked |
 | Lint/format | `ruff` | |
 
-Before using any LLM SDK or model name, check the provider's current documentation. Model names and free-tier limits change often; do not rely on remembered values.
+No LLM is used. If one is ever added (e.g. a local Ollama model behind a setting), it must return the same `ConceptExtraction` schema, and its SDK/model names must be checked against current docs first.
 
 ## 4. Repository layout
 
@@ -63,6 +63,7 @@ Before using any LLM SDK or model name, check the provider's current documentati
 ├── .gitignore
 ├── config/
 │   ├── channels.yaml        # curated channels, grouped by topic
+│   ├── terms.yaml           # extractor vocabulary + signal phrases
 │   └── settings.yaml        # thresholds, model names, digest size
 ├── src/shorts_digest/
 │   ├── __init__.py
@@ -71,14 +72,12 @@ Before using any LLM SDK or model name, check the provider's current documentati
 │   ├── youtube.py           # channel -> uploads playlist -> new videos
 │   ├── shorts.py            # decide whether a video is a Short
 │   ├── transcripts.py       # fetch transcript, fallback to description
-│   ├── llm.py               # provider-agnostic client with fallback + retry
-│   ├── extract.py           # prompt + pydantic schema for concept extraction
+│   ├── extract.py           # rule-based extractor + pydantic schema
+│   ├── pipeline.py          # stages wired together (fetch, text, extract, ...)
 │   ├── dedupe.py            # video-level and concept-level dedup
 │   ├── store.py             # SQLite schema and queries
 │   ├── digest.py            # rank, select, render Markdown and CSV
 │   └── notify.py            # email sender
-├── prompts/
-│   └── extract_concept.md   # the extraction prompt, versioned in Git
 ├── data/                    # gitignored except .gitkeep
 ├── output/                  # generated digests
 ├── tests/
@@ -93,7 +92,7 @@ Each stage is a separate function that can be run and tested on its own. Stages 
 2. **Discover.** For each channel, get the uploads playlist and list items published since the last successful run (default lookback: 3 days on first run).
 3. **Classify.** Fetch durations in batches and keep only Shorts (rules in section 6).
 4. **Extract text.** Try the transcript. If unavailable, use title + description and mark `text_source = "metadata"`.
-5. **Understand.** Send text to the LLM and parse the structured result (schema in section 7).
+5. **Understand.** Run the rule-based extractor on the text (schema and rules in section 7).
 6. **Filter.** Drop items below `min_usefulness`, items with `is_promotional = true`, and duplicates.
 7. **Store.** Upsert everything, including rejected items with a reason, so nothing is processed twice.
 8. **Digest.** Pick the top N per run, balanced across topics. Render Markdown and CSV into `output/`.
@@ -117,9 +116,9 @@ The default quota is 10,000 units a day. `search.list` costs 100 units; most rea
 
 **Transcripts.** `youtube-transcript-api` is unofficial and can break or be blocked, particularly from cloud runner IPs. Wrap every call in try/except, never let a transcript failure stop the run, and record the failure reason. Prefer English, then Hindi, then any auto-generated track.
 
-## 7. LLM extraction
+## 7. Concept extraction (rule-based, no LLM)
 
-The prompt lives in `prompts/extract_concept.md`. Ask for JSON only and validate with this schema:
+Implemented in `extract.py`; vocabulary and signal phrases in `config/terms.yaml`. Output is validated with this schema (same shape an LLM would return, so one could be swapped in later), plus a `reasons` list explaining each score:
 
 ```python
 class ConceptExtraction(BaseModel):
@@ -134,7 +133,7 @@ class ConceptExtraction(BaseModel):
     next_step: str | None   # what to search or read to actually learn it
 ```
 
-**Usefulness rubric (put this in the prompt):**
+**Usefulness rubric (the scoring rules follow it):**
 
 - 5 — teaches a specific, reusable technique with enough detail to try it
 - 4 — names a concrete tool or method and says when to use it
@@ -144,12 +143,11 @@ class ConceptExtraction(BaseModel):
 
 **Rules:**
 
-- If the text is too thin to judge, return `confidence = "low"` and `usefulness <= 2` rather than guessing.
-- The model must not invent details that are not in the text.
-- Invalid JSON: retry once with the validation error appended, then mark the item `extraction_failed`.
-- Handle 429 responses with exponential backoff, then switch to the fallback provider.
-- Throttle requests to stay inside free-tier limits (configurable `requests_per_minute`).
-- Cache by video ID: never send the same video to the LLM twice.
+- If the text is too thin to judge (< 25 words), `confidence = "low"` and `usefulness <= 2`.
+- Never invent details: the summary is an actual sentence from the transcript (extractive).
+- Every score carries human-readable `reasons`; tune `config/terms.yaml` rather than hardcoding words.
+- An exception on one item marks it `extraction_failed` and the run continues.
+- Each video is extracted once (status moves `text_ready` -> `extracted`); bump `EXTRACTOR_VERSION` when rules change.
 
 ## 8. Data model (SQLite)
 
@@ -195,10 +193,6 @@ verify_shorts_url: false
 min_usefulness: 3
 digest_size: 8
 max_per_topic: 3
-llm:
-  primary: {provider: gemini, model: "<set from current docs>"}
-  fallback: {provider: groq, model: "<set from current docs>"}
-  requests_per_minute: 10
 email:
   enabled: false
 ```
@@ -207,8 +201,6 @@ email:
 
 ```
 YOUTUBE_API_KEY=
-GEMINI_API_KEY=
-GROQ_API_KEY=
 SMTP_HOST=
 SMTP_PORT=
 SMTP_USER=
@@ -223,10 +215,11 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 
 python -m shorts_digest run                  # full pipeline
-python -m shorts_digest run --dry-run        # no LLM calls, no email, prints plan
+python -m shorts_digest run --dry-run        # no email, prints plan
 python -m shorts_digest run --limit 5        # process at most 5 videos
 python -m shorts_digest fetch                # discovery + classify only
-python -m shorts_digest extract              # LLM stage on stored, unprocessed videos
+python -m shorts_digest text                 # transcripts for stored Shorts
+python -m shorts_digest extract              # rule-based extraction on stored Shorts
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
 python -m shorts_digest discover-channels "data engineering"   # one-off helper
 
@@ -268,9 +261,9 @@ Work in these phases. Finish and verify each one before starting the next, and c
 1. **Skeleton** — layout, config loading, `.env.example`, `.gitignore`, CLI stub, one passing test.
 2. **Discovery** — channels to new videos to Shorts, stored in SQLite. Verify with `fetch --limit 5` on real channels.
 3. **Text** — transcripts with fallback.
-4. **Extraction** — prompt, schema, one provider. Save 10 real outputs to `tests/fixtures/` for the owner to review.
+4. **Extraction** — rule-based extractor, schema, `config/terms.yaml`. Save 10 real outputs to `tests/fixtures/` for the owner to review.
 5. **Filter and digest** — dedup, ranking, Markdown and CSV.
-6. **Reliability** — retries, fallback provider, resume after failure, quota logging.
+6. **Reliability** — retries, resume after failure, quota logging.
 7. **Automation** — GitHub Actions and email.
 8. **Evaluation** — a labelled set of 30 Shorts in `tests/eval/` scored by the owner, and a script that reports how often the model's usefulness score is within 1 of the owner's. Put the result in the README.
 
@@ -294,4 +287,4 @@ Work in these phases. Finish and verify each one before starting the next, and c
 - Many Shorts are visual with little speech, so some will have no usable text.
 - Summaries of short transcripts can be wrong; every item keeps its link so the owner can check.
 - Transcript fetching is unofficial and may stop working.
-- Free-tier LLM limits change; the pipeline throttles and can spread a backlog over several runs.
+- Extraction is rule-based: it recognises known tools and how-to language well, but summaries are a single transcript sentence and novel terms are missed until added to `config/terms.yaml`.
