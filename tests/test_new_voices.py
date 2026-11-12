@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from fakes import CH_A, FakeYouTube
+from fakes import CH_A, FakeYouTube, settings_text
 
 from shorts_digest import store
 from shorts_digest.channels import approve_channel, review_lines, set_owner_status
@@ -291,7 +291,7 @@ def cli_env(monkeypatch, tmp_path):
     import shorts_digest.transcripts as transcripts
     import shorts_digest.youtube as youtube
 
-    (tmp_path / "settings.yaml").write_text((REAL_CONFIG / "settings.yaml").read_text())
+    (tmp_path / "settings.yaml").write_text(settings_text())
     (tmp_path / "channels.yaml").write_text(f"topics:\n  python:\n    - {{id: {CH_A}, name: A}}\n")
     monkeypatch.setenv("YOUTUBE_API_KEY", "fake-key-for-tests")
     monkeypatch.setattr(cli, "load_config", lambda: load_config(tmp_path, tmp_path / "none.env"))

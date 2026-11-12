@@ -5,9 +5,9 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, pulls
 each one teaches with a transparent rule-based extractor (no LLM, no AI API keys), filters out ads
 and fluff, and produces a 5–10 item "what to learn next" digest with links.
 
-> **Status:** Phase 9 of 11 — one `run` fetches curated channels, discovers small rising
-> creators, extracts and filters everything, and writes a digest with a main section,
-> "New voices" and channel suggestions you approve from the CLI. Next: GitHub Actions + email.
+> **Status:** Phase 10 of 11 — runs daily on GitHub Actions and emails the digest: curated
+> channels, "New voices" from small rising creators, and channel suggestions you approve from
+> the CLI. Next: an evaluation against hand-scored Shorts.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -44,6 +44,7 @@ python -m shorts_digest text                 # transcripts for stored Shorts
 python -m shorts_digest extract              # concept extraction on stored Shorts
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
 python -m shorts_digest quota                # today's API quota use, by source and method
+python -m shorts_digest email-test           # send the newest digest to DIGEST_TO
 python -m shorts_digest resolve-channels     # add channels by name (see below)
 python -m shorts_digest run --no-discovery   # curated channels only
 python -m shorts_digest discover --dry-run --max-searches 3   # preview discovery (see below)
@@ -90,6 +91,39 @@ Every API call goes through one **quota guard** (`quota.py`):
   CI job) is left as `running`; the next run marks it `failed: interrupted`.
 - **No overwrites:** a second run on the same day writes `digest-YYYY-MM-DD-2.md` instead of
   replacing the digest already produced.
+
+## Email
+
+With `email.enabled: true` (settings.yaml), `run` emails the digest after writing it: the
+Markdown as plain text plus a simple HTML version, with the CSV attached. Days where nothing
+passed the filters send nothing (`send_when_empty: false`).
+
+Set in `.env` (locally) or as repository secrets (GitHub): `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_APP_PASSWORD`, `DIGEST_TO`. For Gmail: `smtp.gmail.com`, port `587`, and an
+**app password** (Google account → Security → 2-Step Verification → App passwords), never
+your normal password. Port 465 uses SSL, anything else STARTTLS. Check the setup with
+`python -m shorts_digest email-test`.
+
+`run` checks the SMTP keys *before* doing any work. If sending fails, the run is marked
+`failed` (stage `notify`) and its items are un-marked as sent, so the next run sends them.
+
+## Running daily on GitHub Actions
+
+`.github/workflows/daily.yml` runs at 01:30 UTC (07:00 IST) and from the **Run workflow**
+button. Steps: install → restore the database → `python -m shorts_digest run` → save the
+database → upload `output/` (30 days) and a database backup (14 days) as artifacts.
+
+**Where the database lives.** Runners start empty every day, so `data/digest.db` is kept on
+a separate `data` branch that holds only that file. Each run restores it and force-pushes it
+back as a single commit: the branch never piles up a history of binary snapshots (the
+artifact backup covers "undo"). The save and upload steps run even when the pipeline fails,
+so the error recorded in the `runs` table is kept; the job still turns red, and GitHub emails
+you about failed scheduled runs.
+
+**Setup:** push the repo, then add the six secrets under Settings → Secrets and variables →
+Actions: `YOUTUBE_API_KEY` and the five SMTP ones above. Start one run by hand from the
+Actions tab to check it. Expect transcripts to be blocked on GitHub's servers (YouTube often
+blocks cloud IPs), so CI digests are mostly judged from titles and descriptions.
 
 ## Adding channels
 
@@ -218,7 +252,7 @@ Example item from the first real digest (12 Nov 2026, 8 picked from 23 Shorts ac
 7. ✅ `resolve-channels` — channel names → IDs, confirmed one by one
 8. ✅ Discovery part 1 — capped keyword search for small, rising creators (dry-run first)
 9. ✅ Discovery part 2 — "New voices" digest section, channel promotion flow
-10. Daily GitHub Actions run + email
+10. ✅ Daily GitHub Actions run + email
 11. Evaluation against 30 hand-scored Shorts
 
 ## Known limitations

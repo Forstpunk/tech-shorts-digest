@@ -40,4 +40,5 @@ discovery:
     - programming meme
     - coding joke
 email:
-  enabled: false
+  enabled: true           # send the digest after each `run` (needs the SMTP_* keys)
+  send_when_empty: false  # no email on days when nothing passed the filters

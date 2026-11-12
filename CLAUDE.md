@@ -238,7 +238,8 @@ discovery:
   max_candidates_per_day: 20
   keywords: [python trick, python tips, ...]
 email:
-  enabled: false
+  enabled: true
+  send_when_empty: false
 ```
 
 `.env` (never commit; keep `.env.example` up to date):
@@ -273,6 +274,7 @@ python -m shorts_digest channels reject <id>
 python -m shorts_digest channels block <id>
 python -m shorts_digest resolve-channels config/channel_names.txt
 python -m shorts_digest quota                   # today's usage by source
+python -m shorts_digest email-test              # send the newest digest (SMTP check)
 
 pytest -q
 ruff check . && ruff format .

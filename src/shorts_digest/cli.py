@@ -111,7 +111,25 @@ def _digest(cfg: AppConfig, conn: sqlite3.Connection, days: int, run_id: int | N
         md_path.relative_to(md_path.parents[1]),
         csv_path.name,
     )
-    return d
+    return d, md_path, csv_path
+
+
+def _notify(cfg: AppConfig, conn: sqlite3.Connection, run_id: int, d, md_path, csv_path) -> str:
+    """Email the digest. On failure, un-mark the items as sent (so the next run resends)
+    and re-raise, so the run fails visibly. Returns what happened, for the summary."""
+    from shorts_digest.notify import digest_subject, send_digest
+
+    if not (d.items or d.new_voices or d.suggestions) and not cfg.settings.email.send_when_empty:
+        log.info("Email skipped: nothing passed the filters today")
+        return "skipped_empty"
+    subject = digest_subject(f"{d.day.day} {d.day:%b %Y}", len(d.items), len(d.new_voices))
+    try:
+        send_digest(cfg.env, subject, md_path.read_text(encoding="utf-8"), csv_path)
+    except Exception:
+        store.unrecord_digest(conn, run_id, [sg.channel_id for sg in d.suggestions])
+        raise
+    log.info("Email sent: %s", subject)
+    return "sent"
 
 
 # --- recorded runs -----------------------------------------------------------------
@@ -132,6 +150,8 @@ def summary_line(run_id: int, status: str, s: dict, guard, discovery_guard=None)
         parts.append(f"accepted={s['accepted']} rejected={s['rejected']}")
     if "digest" in s:
         parts.append(f"digest={s['digest']} (+{s.get('new_voices', 0)} new voices)")
+    if "email" in s:
+        parts.append(f"email={s['email']}")
     if s.get("channels_failed"):
         parts.append(f"channels_failed={s['channels_failed']}")
     d_units = discovery_guard.units if discovery_guard else 0
@@ -174,6 +194,11 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None, discovery: bo
 
     cfg.require_channels()
     cfg.env.require("YOUTUBE_API_KEY")
+    email = command == "run" and cfg.settings.email.enabled
+    if email:  # fail fast: don't spend a whole run and then discover the email can't go out
+        from shorts_digest.notify import SMTP_KEYS
+
+        cfg.env.require(*SMTP_KEYS)
     conn = store.connect()
     stale = store.mark_interrupted_runs(conn)
     if stale:
@@ -202,8 +227,11 @@ def _recorded_run(cfg: AppConfig, command: str, limit: int | None, discovery: bo
             fl = _filter(cfg, conn)
             s.update(accepted=fl.accepted, rejected=sum(fl.rejected.values()))
             stage = "digest"
-            d = _digest(cfg, conn, RUN_DIGEST_WINDOW_DAYS, run_id)
+            d, md_path, csv_path = _digest(cfg, conn, RUN_DIGEST_WINDOW_DAYS, run_id)
             s.update(digest=len(d.items), new_voices=len(d.new_voices))
+            if email:
+                stage = "notify"
+                s["email"] = _notify(cfg, conn, run_id, d, md_path, csv_path)
     except Exception as exc:
         # "Fail loud per run": write the failure to the runs table, then exit non-zero.
         store.finish_run(
@@ -251,6 +279,15 @@ def _discovery_plan(cfg: AppConfig, conn: sqlite3.Connection, guard) -> str:
     return f"on, {n} searches left today (~{n * 100 + 2 * math.ceil(n / 2)} units)"
 
 
+def _email_plan(cfg: AppConfig) -> str:
+    from shorts_digest.notify import SMTP_KEYS
+
+    if not cfg.settings.email.enabled:
+        return "off"
+    missing = [k for k in SMTP_KEYS if not cfg.env.get(k)]
+    return f"on, but MISSING {', '.join(missing)}" if missing else "on (SMTP keys set)"
+
+
 def _dry_run(cfg: AppConfig) -> int:
     """Print what a run would do. No API calls, no transcripts, no digest, no email."""
     from shorts_digest.pipeline import _since
@@ -278,7 +315,7 @@ def _dry_run(cfg: AppConfig) -> int:
         f"  digest:          up to {cfg.settings.digest_size} items, "
         f"max {cfg.settings.max_per_topic} per topic\n"
         f"  discovery:       {_discovery_plan(cfg, conn, guard)}\n"
-        f"  email:           {'on' if cfg.settings.email.enabled else 'off'}\n"
+        f"  email:           {_email_plan(cfg)}\n"
         f"  YOUTUBE_API_KEY: {key}"
     )
     return 0
@@ -312,6 +349,29 @@ def cmd_digest(cfg: AppConfig, args: argparse.Namespace) -> int:
     conn = store.connect()
     _filter(cfg, conn)
     _digest(cfg, conn, args.days, run_id=None)
+    return 0
+
+
+def cmd_email_test(cfg: AppConfig, args: argparse.Namespace) -> int:
+    """Send the newest digest in output/ to DIGEST_TO, to check the SMTP setup."""
+    from shorts_digest import digest as digest_mod
+    from shorts_digest.notify import SMTP_KEYS, send_digest
+
+    cfg.env.require(*SMTP_KEYS)
+    files = sorted(
+        digest_mod.DEFAULT_OUTPUT_DIR.glob("digest-*.md"), key=lambda p: p.stat().st_mtime
+    )
+    if not files:
+        log.error("No digest in output/ yet. Run `python -m shorts_digest digest` first.")
+        return 1
+    md_path = files[-1]
+    send_digest(
+        cfg.env,
+        f"Tech Shorts Digest — test email ({md_path.name})",
+        md_path.read_text(encoding="utf-8"),
+        md_path.with_suffix(".csv"),
+    )
+    log.info("Test email sent with %s", md_path.name)
     return 0
 
 
@@ -529,6 +589,9 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         ch_sub.add_parser(action, help=text).add_argument("channel_id")
     p.set_defaults(func=cmd_channels)
+
+    p = sub.add_parser("email-test", help="send the newest digest to DIGEST_TO (SMTP check)")
+    p.set_defaults(func=cmd_email_test)
 
     p = sub.add_parser("quota", help="today's YouTube API quota use")
     p.set_defaults(func=cmd_quota)

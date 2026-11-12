@@ -590,6 +590,16 @@ def shorts_pool_counts(
     return row["n"], row["ch"]
 
 
+def unrecord_digest(conn: sqlite3.Connection, run_id: int, suggested: list[str]) -> None:
+    """Undo record_digest when the email could not be sent, so the next run resends."""
+    with conn:
+        conn.execute("DELETE FROM digest_items WHERE run_id = ?", (run_id,))
+        conn.executemany(
+            "UPDATE discovered_channels SET last_suggested_at = NULL WHERE channel_id = ?",
+            [(cid,) for cid in suggested],
+        )
+
+
 def record_digest(conn: sqlite3.Connection, run_id: int, ranked: list[tuple[str, int]]) -> None:
     """Remember which videos went out in which run, so they are never sent twice."""
     with conn:

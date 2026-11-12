@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from fakes import CH_A, CH_B, FakeYouTube, http_error, make_guard
+from fakes import CH_A, CH_B, FakeYouTube, http_error, make_guard, settings_text
 
 import shorts_digest.cli as cli
 import shorts_digest.transcripts as transcripts
@@ -127,7 +127,7 @@ def cli_env(monkeypatch, tmp_path):
     """Two fake channels, a fake API, temp DB and output dir."""
     import shorts_digest.digest as digest
 
-    (tmp_path / "settings.yaml").write_text((REAL_CONFIG / "settings.yaml").read_text())
+    (tmp_path / "settings.yaml").write_text(settings_text())
     (tmp_path / "channels.yaml").write_text(
         f"topics:\n  python:\n    - {{id: {CH_A}, name: A}}\n"
         f"  data_engineering:\n    - {{id: {CH_B}, name: B}}\n"

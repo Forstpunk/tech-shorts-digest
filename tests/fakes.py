@@ -169,3 +169,13 @@ def make_guard(conn, daily_limit: int = 6000, source: str = "curated", reserve: 
     from shorts_digest.quota import QuotaGuard
 
     return QuotaGuard(conn, source, daily_limit, reserve)
+
+
+def settings_text(email: bool = False) -> str:
+    """The real config/settings.yaml, with email switched off unless a test wants it."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
+    old = "  enabled: true           # send the digest"
+    assert old in text, "settings.yaml email line changed; update tests/fakes.py"
+    return text.replace(old, f"  enabled: {str(email).lower()}           # send the digest")

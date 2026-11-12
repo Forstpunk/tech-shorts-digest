@@ -1,0 +1,97 @@
+# Daily Tech Shorts Digest.
+#
+# State: the SQLite DB (data/digest.db) is kept on a separate `data` branch that holds only
+# that file. Each run restores it, runs the pipeline, and force-pushes it back as a single
+# commit, so the branch never grows a history of binary snapshots. A copy of the DB is also
+# kept as a workflow artifact for 14 days as a backup.
+#
+# Secrets (Settings -> Secrets and variables -> Actions): YOUTUBE_API_KEY, SMTP_HOST,
+# SMTP_PORT, SMTP_USER, SMTP_APP_PASSWORD, DIGEST_TO. They are never written to files.
+
+name: daily-digest
+
+on:
+  schedule:
+    - cron: "30 1 * * *" # 01:30 UTC = 07:00 IST
+  workflow_dispatch: {} # "Run workflow" button for a manual run
+
+# Two runs at once would race on the data branch, so queue them instead.
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push the data branch
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Restore database from the data branch
+        run: |
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git fetch --depth=1 origin data
+            git show origin/data:digest.db > data/digest.db
+            echo "Restored digest.db ($(du -h data/digest.db | cut -f1))"
+          else
+            echo "No data branch yet: first run starts with an empty database."
+          fi
+
+      - name: Run pipeline
+        id: pipeline
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_APP_PASSWORD: ${{ secrets.SMTP_APP_PASSWORD }}
+          DIGEST_TO: ${{ secrets.DIGEST_TO }}
+        run: python -m shorts_digest run
+
+      # The steps below run even when the pipeline failed: the runs table holds the error,
+      # and the outputs help debugging. The job still ends red because the pipeline failed.
+      - name: Save database to the data branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f data/digest.db ] || { echo "No database to save"; exit 0; }
+          dir="$RUNNER_TEMP/data-branch"
+          rm -rf "$dir" && mkdir -p "$dir"
+          cp data/digest.db "$dir/"
+          cd "$dir"
+          git init -q -b data
+          git add digest.db
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "digest.db after run ${{ github.run_id }}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" data
+
+      - name: Upload digest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ github.run_id }}
+          path: output/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload database backup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-db-${{ github.run_id }}
+          path: data/digest.db
+          if-no-files-found: ignore
+          retention-days: 14

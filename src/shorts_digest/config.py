@@ -66,6 +66,7 @@ class ChannelsConfig(_Strict):
 
 class EmailConfig(_Strict):
     enabled: bool = False
+    send_when_empty: bool = False  # skip the email on days when nothing passed the filters
 
 
 class QuotaConfig(_Strict):
