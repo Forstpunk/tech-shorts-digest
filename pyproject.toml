@@ -1,0 +1,26 @@
+# Minimal packaging so `pip install -e .` puts src/shorts_digest on the import path.
+# Dependencies stay in requirements.txt (pinned); this file only describes the package.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorts-digest"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# CLAUDE.md is owner-maintained prose; don't let `ruff format` touch its code samples.
+extend-exclude = ["CLAUDE.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

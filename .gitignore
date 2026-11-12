@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Local data and generated output (keep the folders)
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+
+# OS
+.DS_Store
+*.egg-info/

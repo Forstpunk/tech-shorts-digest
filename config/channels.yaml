@@ -1,0 +1,13 @@
+# Curated channels, grouped by topic. Topic names here are the only topics the LLM may assign.
+# Add real channel IDs (they start with "UC"). Find one on a channel page via
+# "Share channel" -> "Copy channel ID", or run `python -m shorts_digest discover-channels "<query>"`.
+#
+# Example:
+#   ai_llm:
+#     - id: UC...
+#       name: Some Channel
+topics:
+  ai_llm: []
+  data_engineering: []
+  python: []
+  cloud_devops: []

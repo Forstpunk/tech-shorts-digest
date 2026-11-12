@@ -1,0 +1,11 @@
+# Runtime
+pydantic==2.14.3        # validates config now, LLM output later
+python-dotenv==1.2.4    # loads secrets from .env
+PyYAML==6.0.3           # reads config/*.yaml
+
+# Dev
+pytest==9.2.0
+ruff==0.17.4
+
+# This project itself (editable), so `python -m shorts_digest` works from anywhere
+-e .
