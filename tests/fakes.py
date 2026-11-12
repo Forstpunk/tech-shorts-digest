@@ -46,30 +46,60 @@ class FakeYouTube:
     channels:  {channel_id: uploads_playlist_id}
     playlists: {playlist_id: [ {videoId, videoPublishedAt}, ... ] newest first} or an Exception
     videos:    {video_id: {channelId, title, duration, publishedAt}}
+    info:      {channel_id: {title, handle, subs, videos, hidden}} - snippet/statistics
+    search:    {query: [channel_id, ...]} - search.list results
     failures:  {"videos.list": [exc, exc]} - raised on the next attempts of that method
     """
 
-    def __init__(self, channels=None, playlists=None, videos=None, page_size=50):
+    def __init__(
+        self, channels=None, playlists=None, videos=None, page_size=50, info=None, search=None
+    ):
         self.channels_data = channels or {}
         self.playlists_data = playlists or {}
         self.videos_data = videos or {}
         self.page_size = page_size
+        self.channel_info = info or {}  # {cid: {title, handle, subs, videos, hidden}}
+        self.search_results = search or {}  # {query: [cid, ...]}
         self.calls: list[tuple[str, dict]] = []
         self.failures: dict[str, list[Exception]] = {}
 
     def channels(self):
-        def fn(id, **_):
-            items = [
-                {
-                    "id": cid,
-                    "contentDetails": {"relatedPlaylists": {"uploads": self.channels_data[cid]}},
-                }
-                for cid in id.split(",")
-                if cid in self.channels_data
-            ]
+        def fn(id=None, forHandle=None, **_):
+            if forHandle is not None:  # handles are case-insensitive on YouTube
+                ids = [
+                    cid
+                    for cid, info in self.channel_info.items()
+                    if info.get("handle", "").lower() == forHandle.lower()
+                ]
+            else:
+                ids = id.split(",")
+            items = []
+            for cid in ids:
+                if cid not in self.channels_data and cid not in self.channel_info:
+                    continue
+                item = {"id": cid}
+                if cid in self.channels_data:
+                    uploads = self.channels_data[cid]
+                    item["contentDetails"] = {"relatedPlaylists": {"uploads": uploads}}
+                if cid in self.channel_info:
+                    info = self.channel_info[cid]
+                    item["snippet"] = {"title": info["title"], "customUrl": info.get("handle")}
+                    item["statistics"] = {
+                        "subscriberCount": str(info.get("subs", 5000)),
+                        "videoCount": str(info.get("videos", 100)),
+                        "hiddenSubscriberCount": info.get("hidden", False),
+                    }
+                items.append(item)
             return {"items": items}
 
         return _Resource(fn, self.calls, "channels.list", self.failures)
+
+    def search(self):
+        def fn(q, maxResults=5, **_):
+            ids = self.search_results.get(q, [])[:maxResults]
+            return {"items": [{"id": {"kind": "youtube#channel", "channelId": c}} for c in ids]}
+
+        return _Resource(fn, self.calls, "search.list", self.failures)
 
     def playlistItems(self):
         def fn(playlistId, pageToken=None, **_):

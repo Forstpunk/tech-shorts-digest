@@ -5,9 +5,10 @@ It watches a hand-picked list of YouTube channels, finds their new Shorts, pulls
 each one teaches with a transparent rule-based extractor (no LLM, no AI API keys), filters out ads
 and fluff, and produces a 5–10 item "what to learn next" digest with links.
 
-> **Status:** Phase 6 of 11 — the curated pipeline runs end to end with a quota guard,
+> **Status:** Phase 7 of 11 — the curated pipeline runs end to end with a quota guard,
 > retries and resume-after-failure, and writes a daily digest (`output/digest-YYYY-MM-DD.md`
-> + `.csv`). Next: a channel-name resolver, then discovery of small creators.
+> + `.csv`). Channels can be added by name with `resolve-channels`. Next: discovery of small,
+> rising creators.
 > See [Roadmap](#roadmap).
 
 ## How it works (planned pipeline)
@@ -44,6 +45,7 @@ python -m shorts_digest text                 # transcripts for stored Shorts
 python -m shorts_digest extract              # concept extraction on stored Shorts
 python -m shorts_digest digest --days 7      # rebuild a digest from stored data
 python -m shorts_digest quota                # today's API quota use, by source and method
+python -m shorts_digest resolve-channels     # add channels by name (see below)
 
 pytest -q
 ruff check . && ruff format .
@@ -83,6 +85,24 @@ Every API call goes through one **quota guard** (`quota.py`):
   CI job) is left as `running`; the next run marks it `failed: interrupted`.
 - **No overwrites:** a second run on the same day writes `digest-YYYY-MM-DD-2.md` instead of
   replacing the digest already produced.
+
+## Adding channels
+
+Put names, @handles, channel URLs or IDs in `config/channel_names.txt` (one per line), then run
+`python -m shorts_digest resolve-channels [--topic python]` in a terminal. For each line it:
+
+1. looks the channel up by ID or @handle for 1 quota unit; for a plain name it guesses the
+   handle ("Tech With Tim" → `@TechWithTim`),
+2. shows the match with subscriber count, video count and link, and asks if it is right.
+   A guessed handle that looks wrong (no videos, under 1,000 subscribers, or a different
+   title) gets a look-alike warning: handles are first-come-first-served, so `@CoreySchafer`
+   is a 68-subscriber squatter while the real channel is `@coreyms`,
+3. offers a channel search only if you say yes (100 units, at most 10 per run),
+4. asks for a topic, skips channels already listed.
+
+At the end it shows the `channels.yaml` diff and writes only after a final yes. The file is
+edited as text, so comments and layout survive, and the result is validated before saving.
+Quota is logged under the `resolve` source.
 
 ## Data model
 
@@ -147,7 +167,7 @@ Example item from the first real digest (12 Nov 2026, 8 picked from 23 Shorts ac
 4. ✅ Concept extraction (rule-based, no LLM)
 5. ✅ Dedup, ranking, Markdown/CSV digest
 6. ✅ Quota guard + reliability — retries, resume, run summary, `quota` command
-7. `resolve-channels` — channel names → IDs, confirmed one by one
+7. ✅ `resolve-channels` — channel names → IDs, confirmed one by one
 8. Discovery part 1 — capped keyword search for small, rising creators (dry-run first)
 9. Discovery part 2 — "New voices" digest section, channel promotion flow
 10. Daily GitHub Actions run + email

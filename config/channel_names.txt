@@ -1,0 +1,8 @@
+# Channels to add with:  python -m shorts_digest resolve-channels
+# One per line. Any of these work:
+#   Tech With Tim                               (a name: the handle is guessed, 1 quota unit)
+#   @coreyms                                    (a handle: most reliable, 1 unit)
+#   https://www.youtube.com/@ArjanCodes         (a channel URL)
+#   UCVhQ2NnY5Rskt6UjCUkJ_DA                    (a channel ID)
+# You confirm every match and the final channels.yaml diff; a search (100 units) only
+# runs if you say yes. Lines starting with # are ignored. Clear the list once added.

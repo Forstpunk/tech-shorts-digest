@@ -14,6 +14,7 @@ import math
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from shorts_digest import store
 from shorts_digest.config import AppConfig, ConfigError, load_config
@@ -236,11 +237,6 @@ def _dry_run(cfg: AppConfig) -> int:
 # --- commands ----------------------------------------------------------------------
 
 
-def _not_implemented(stage: str, phase: int) -> int:
-    log.info("'%s' is not implemented yet (planned for phase %d).", stage, phase)
-    return 0
-
-
 def cmd_run(cfg: AppConfig, args: argparse.Namespace) -> int:
     if args.dry_run:
         return _dry_run(cfg)
@@ -286,8 +282,67 @@ def cmd_quota(cfg: AppConfig, args: argparse.Namespace) -> int:
     return 0
 
 
+def _interactive() -> bool:
+    import sys
+
+    return sys.stdin.isatty()
+
+
+def _ask(prompt: str) -> str:
+    try:
+        return input(prompt)
+    except EOFError:  # stdin closed: treat as "no"
+        return ""
+
+
 def cmd_resolve_channels(cfg: AppConfig, args: argparse.Namespace) -> int:
-    return _not_implemented("resolve-channels", 7)
+    """Names -> verified channel IDs -> channels.yaml, each step confirmed by the owner."""
+    from shorts_digest import youtube
+    from shorts_digest.channels import Resolver, apply_with_confirmation, read_names
+    from shorts_digest.config import DEFAULT_CONFIG_DIR, PROJECT_ROOT
+    from shorts_digest.quota import QuotaLimitError
+
+    if not _interactive():  # e.g. GitHub Actions: there is nobody to confirm
+        log.error("resolve-channels asks for confirmation, so run it in a terminal.")
+        return 2
+    if args.topic and args.topic not in cfg.channels.topic_names:
+        raise ConfigError(
+            f"--topic {args.topic!r} is not a topic in channels.yaml "
+            f"({', '.join(cfg.channels.topic_names)})"
+        )
+    cfg.env.require("YOUTUBE_API_KEY")
+    names_path = Path(args.file)
+    if not names_path.is_absolute():
+        names_path = PROJECT_ROOT / names_path
+    entries = read_names(names_path)
+    if not entries:
+        log.info("%s has no channel names in it.", names_path.name)
+        return 0
+
+    conn = store.connect()
+    guard = _new_guard(cfg, conn, "resolve")
+    client = youtube.build_client(cfg.env.get("YOUTUBE_API_KEY"))
+    resolver = Resolver(client, guard, cfg.channels, _ask, print, args.topic)
+    try:
+        result = resolver.resolve(entries)
+    except (QuotaLimitError, youtube.YouTubeFatalError) as exc:
+        log.error("Stopped: %s (nothing was written)", exc)
+        return 1
+    print()
+    for raw, why in result.skipped:
+        print(f"  skipped {raw!r}: {why}")
+    written = apply_with_confirmation(
+        DEFAULT_CONFIG_DIR / "channels.yaml", result.added, _ask, print
+    )
+    log.info(
+        "resolve-channels: %d to add, %d skipped, written=%s, searches=%d, quota=%d units",
+        len(result.added),
+        len(result.skipped),
+        written,
+        result.searches,
+        guard.units,
+    )
+    return 0
 
 
 def _positive_int(value: str) -> int:
@@ -329,8 +384,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("quota", help="today's YouTube API quota use")
     p.set_defaults(func=cmd_quota)
 
-    p = sub.add_parser("resolve-channels", help="turn channel names into IDs (phase 7)")
+    p = sub.add_parser(
+        "resolve-channels", help="turn channel names into IDs and add them to channels.yaml"
+    )
     p.add_argument("file", nargs="?", default="config/channel_names.txt")
+    p.add_argument("--topic", help="default topic offered for every channel")
     p.set_defaults(func=cmd_resolve_channels)
 
     return parser

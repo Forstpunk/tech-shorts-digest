@@ -192,3 +192,78 @@ def fetch_video_details(client: Any, video_ids: list[str], quota: Quota) -> dict
                 duration=item["contentDetails"].get("duration", ""),
             )
     return result
+
+
+# --- channel lookups (resolve-channels; later also discovery) ----------------------
+
+
+@dataclass
+class ChannelInfo:
+    id: str
+    title: str
+    handle: str | None  # e.g. "@fireship" (the API's customUrl)
+    subscribers: int | None  # None when the channel hides its count
+    video_count: int | None
+
+    @property
+    def url(self) -> str:
+        if self.handle:
+            return f"https://www.youtube.com/{self.handle}"
+        return f"https://www.youtube.com/channel/{self.id}"
+
+
+def _channel_info(item: dict) -> ChannelInfo:
+    snip, stats = item.get("snippet", {}), item.get("statistics", {})
+    hidden = stats.get("hiddenSubscriberCount", False)
+    subs = stats.get("subscriberCount")
+    videos = stats.get("videoCount")
+    return ChannelInfo(
+        id=item["id"],
+        title=snip.get("title", ""),
+        handle=snip.get("customUrl"),
+        subscribers=None if hidden or subs is None else int(subs),
+        video_count=None if videos is None else int(videos),
+    )
+
+
+def channel_by_handle(client: Any, handle: str, quota: Quota) -> ChannelInfo | None:
+    """Look a channel up by its @handle (1 unit). None if no channel has that handle."""
+    handle = handle if handle.startswith("@") else "@" + handle
+    resp = _execute(
+        client.channels().list(part="snippet,statistics", forHandle=handle),
+        quota,
+        "channels.list",
+    )
+    items = resp.get("items", [])
+    return _channel_info(items[0]) if items else None
+
+
+def channels_by_id(client: Any, channel_ids: list[str], quota: Quota) -> dict[str, ChannelInfo]:
+    """Title and stats for channels, 50 per call (1 unit each)."""
+    result: dict[str, ChannelInfo] = {}
+    for i in range(0, len(channel_ids), MAX_IDS_PER_CALL):
+        batch = channel_ids[i : i + MAX_IDS_PER_CALL]
+        resp = _execute(
+            client.channels().list(
+                part="snippet,statistics", id=",".join(batch), maxResults=MAX_IDS_PER_CALL
+            ),
+            quota,
+            "channels.list",
+        )
+        for item in resp.get("items", []):
+            result[item["id"]] = _channel_info(item)
+    return result
+
+
+def search_channels(
+    client: Any, query: str, quota: Quota, max_results: int = 5
+) -> list[ChannelInfo]:
+    """Channel search: 100 units for search.list, +1 for their stats. Best match first."""
+    resp = _execute(
+        client.search().list(part="snippet", q=query, type="channel", maxResults=max_results),
+        quota,
+        "search.list",
+    )
+    ids = [it["id"]["channelId"] for it in resp.get("items", []) if "channelId" in it["id"]]
+    found = channels_by_id(client, ids, quota) if ids else {}
+    return [found[i] for i in ids if i in found]

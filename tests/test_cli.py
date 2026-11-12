@@ -29,7 +29,7 @@ def test_help_exits_cleanly(capsys):
 
 @pytest.mark.parametrize(
     "argv",
-    [["extract"], ["text"], ["digest", "--days", "7"], ["quota"], ["resolve-channels"]],
+    [["extract"], ["text"], ["digest", "--days", "7"], ["quota"]],
 )
 def test_commands_exit_zero_on_empty_db(argv):
     assert main(argv) == 0
@@ -88,3 +88,8 @@ def test_fetch_records_run_and_summary(caplog, monkeypatch, tmp_path):
 def test_limit_must_be_positive():
     with pytest.raises(SystemExit):
         main(["fetch", "--limit", "0"])
+
+
+def test_resolve_channels_refuses_without_a_terminal(caplog):
+    assert main(["resolve-channels"]) == 2  # pytest's stdin is not a terminal
+    assert "run it in a terminal" in caplog.text
