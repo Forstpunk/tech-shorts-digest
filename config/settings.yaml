@@ -23,6 +23,8 @@ discovery:
   min_views_per_subscriber: 2.0  # "doing unusually well for its size"
   max_candidates_per_day: 20     # most that go on to extraction
   channel_stats_cache_days: 7
+  languages: [en, hi]            # English + Hindi/Hinglish; judged by YouTube's language tag,
+                                 # or by the title's script (Latin / Devanagari) when untagged
   keywords:                      # rotated round-robin if there are more than the daily cap
     - python trick
     - python tips
@@ -34,7 +36,8 @@ discovery:
     - git tip
     - data engineering explained
     - vscode shortcut
-    - coding humor
-    - programmer skit
+    - developer humor
+    - programming meme
+    - coding joke
 email:
   enabled: false

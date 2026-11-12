@@ -97,6 +97,8 @@ class DiscoveryConfig(_Strict):
     min_views_per_subscriber: float = Field(default=2.0, ge=0)
     max_candidates_per_day: int = Field(default=20, gt=0)
     channel_stats_cache_days: int = Field(default=7, gt=0)
+    # Language codes allowed (YouTube's tag, or the title's script when untagged).
+    languages: list[str] = ["en", "hi"]
     keywords: list[str] = []
 
     @model_validator(mode="after")

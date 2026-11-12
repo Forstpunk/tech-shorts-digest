@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import csv
 import logging
+import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -30,6 +32,7 @@ from typing import Any
 from shorts_digest import store
 from shorts_digest.config import AppConfig, DiscoveryConfig
 from shorts_digest.dedupe import normalize_concept, similarity, word_overlap
+from shorts_digest.extract import Vocabulary, load_vocabulary
 from shorts_digest.quota import COSTS, PACIFIC, QuotaGuard, QuotaLimitError
 from shorts_digest.shorts import is_short_by_duration, parse_duration
 from shorts_digest.youtube import channels_by_id, fetch_video_details, search_short_videos
@@ -51,6 +54,8 @@ DROP_REASONS = (
     "channel_rejected",
     "channel_blocked",
     "channel_unavailable",
+    "wrong_language",  # not in discovery.languages
+    "off_topic",  # title + description mention no tech term from terms.yaml
     "subscribers_hidden",
     "too_few_subscribers",
     "too_many_subscribers",
@@ -78,6 +83,8 @@ class Candidate:
     video_count: int | None = None
     outlier_score: float | None = None
     drop_reason: str | None = None
+    description: str = ""
+    language: str | None = None
 
     @property
     def url(self) -> str:
@@ -132,6 +139,52 @@ def outlier_score(views: int | None, subscribers: int | None) -> float | None:
     return views / max(subscribers, 1)
 
 
+# Hashtags glue words together (#vibecoding, #codinghumour), so whole-word matching misses
+# them. These stems are specific enough to match *inside* a hashtag; short words like "ai",
+# "dev" or "app" are not (they hide in #daily, #devotional, #happy).
+HASHTAG_STEMS = (
+    "coding",
+    "coder",
+    "programm",
+    "developer",
+    "software",
+    "python",
+    "javascript",
+    "excel",
+    "linux",
+    "sql",
+    "chatgpt",
+    "github",
+)
+_HASHTAG_RE = re.compile(r"#(\w+)")
+
+
+def on_topic(text: str, vocab: Vocabulary) -> bool:
+    if vocab.mentions_tech(text):
+        return True
+    return any(stem in tag.lower() for tag in _HASHTAG_RE.findall(text) for stem in HASHTAG_STEMS)
+
+
+# Script each allowed language is written in, for videos without a language tag.
+# Hinglish is Hindi in Latin script, so it passes as Latin.
+LANGUAGE_SCRIPTS = {"en": "LATIN", "hi": "DEVANAGARI"}
+
+
+def language_ok(language: str | None, title: str, allowed: list[str]) -> bool:
+    """YouTube's language tag decides when present; otherwise every letter in the title
+    must be in a script of an allowed language. "zxx" = no speech (e.g. music): allowed."""
+    if language:
+        primary = language.split("-")[0].lower()
+        return primary in allowed or primary == "zxx"
+    scripts = {LANGUAGE_SCRIPTS[lang] for lang in allowed if lang in LANGUAGE_SCRIPTS}
+    if not scripts:
+        return True
+    for ch in title:
+        if ch.isalpha() and unicodedata.name(ch, "").split(" ")[0] not in scripts:
+            return False
+    return True
+
+
 def check_candidate(
     c: Candidate,
     d: DiscoveryConfig,
@@ -139,6 +192,7 @@ def check_candidate(
     curated_ids: set[str],
     channel_status: dict[str, str],
     known_channels: set[str],
+    vocab: Vocabulary | None = None,
 ) -> str | None:
     """First drop reason that applies (before repost and cap checks), or None to keep."""
     if c.duration_seconds is None:
@@ -152,6 +206,10 @@ def check_candidate(
         return f"channel_{status}"
     if c.channel_id not in known_channels:
         return "channel_unavailable"
+    if not language_ok(c.language, c.title, d.languages):
+        return "wrong_language"
+    if vocab is not None and not on_topic(f"{c.title}\n{c.description}", vocab):
+        return "off_topic"
     if c.subscribers is None:
         return "subscribers_hidden"
     if c.subscribers < d.min_subscribers:
@@ -226,8 +284,10 @@ def discover(
     dry_run: bool = False,
     max_searches: int | None = None,
     now: datetime | None = None,
+    vocab: Vocabulary | None = None,
 ) -> DiscoveryResult:
     d = cfg.settings.discovery
+    vocab = vocab or load_vocabulary()
     now = now or datetime.now(UTC)
     result = DiscoveryResult(dry_run=dry_run)
     day = guard.day
@@ -296,6 +356,7 @@ def discover(
         except ValueError:
             c.duration_seconds = 0  # odd duration: treat as not a Short
         c.views, c.title, c.channel_id = v.views, v.title or c.title, v.channel_id
+        c.description, c.language = v.description, v.language
 
     curated = {ch.id for _, ch in cfg.channels.all_channels()}
     # Curated channels are dropped anyway; don't spend units on their stats.
@@ -328,7 +389,7 @@ def discover(
     status = {cid: r["status"] for cid, r in cached.items()}
     for c in cands:
         c.drop_reason = check_candidate(
-            c, d, cfg.settings.max_short_seconds, curated, status, set(stats)
+            c, d, cfg.settings.max_short_seconds, curated, status, set(stats), vocab
         )
     since = (now - timedelta(days=REPOST_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
     stored = [
@@ -364,6 +425,8 @@ def discover(
                     "outlier_score": c.outlier_score,
                     "drop_reason": c.drop_reason,
                     "found_at": found_at,
+                    "description": c.description,
+                    "language": c.language,
                 }
                 for c in cands
             ],
@@ -381,6 +444,7 @@ REPORT_COLUMNS = [
     "subscribers",
     "video_count",
     "duration_seconds",
+    "language",
     "channel_title",
     "title",
     "keyword",

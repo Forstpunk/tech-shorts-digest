@@ -151,6 +151,7 @@ class FakeYouTube:
                                 "title": v.get("title", vid),
                                 "description": v.get("description", ""),
                                 "publishedAt": v["publishedAt"],
+                                "defaultAudioLanguage": v.get("defaultAudioLanguage"),
                             },
                             "contentDetails": {"duration": v["duration"]},
                             "statistics": {"viewCount": str(v["views"])} if "views" in v else {},

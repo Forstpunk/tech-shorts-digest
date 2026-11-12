@@ -62,6 +62,13 @@ class Term:
 class Vocabulary:
     terms: list[Term]
     signals: dict[str, list[re.Pattern]] = field(default_factory=dict)
+    tech_words: list[re.Pattern] = field(default_factory=list)
+
+    def mentions_tech(self, text: str) -> bool:
+        """True if any topic term or general tech word appears (whole word)."""
+        return any(t.pattern.search(text) for t in self.terms) or any(
+            p.search(text) for p in self.tech_words
+        )
 
 
 def _word_pattern(phrase: str) -> re.Pattern:
@@ -96,7 +103,8 @@ def load_vocabulary(path: Path = DEFAULT_TERMS_PATH) -> Vocabulary:
     }
     for key in ("howto", "hype", "news", "promo"):
         signals.setdefault(key, [])
-    return Vocabulary(terms, signals)
+    tech_words = [_word_pattern(w) for w in data.get("tech_words") or []]
+    return Vocabulary(terms, signals, tech_words)
 
 
 # --- text helpers ------------------------------------------------------------------

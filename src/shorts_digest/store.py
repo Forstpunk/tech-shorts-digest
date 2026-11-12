@@ -150,6 +150,11 @@ MIGRATIONS: list[str] = [
         value TEXT
     );
     """,
+    # 6: phase 8 follow-up - topic/language filters need these; phase 9 reuses description
+    """
+    ALTER TABLE discovery_candidates ADD COLUMN description TEXT;
+    ALTER TABLE discovery_candidates ADD COLUMN language TEXT;
+    """,
 ]
 
 
@@ -657,9 +662,10 @@ def save_candidates(conn: sqlite3.Connection, rows: list[dict]) -> None:
             """
             INSERT OR IGNORE INTO discovery_candidates (video_id, channel_id, keyword,
                 search_order, title, published_at, duration_seconds, views, subscribers,
-                outlier_score, drop_reason, found_at)
+                outlier_score, drop_reason, found_at, description, language)
             VALUES (:video_id, :channel_id, :keyword, :search_order, :title, :published_at,
-                :duration_seconds, :views, :subscribers, :outlier_score, :drop_reason, :found_at)
+                :duration_seconds, :views, :subscribers, :outlier_score, :drop_reason, :found_at,
+                :description, :language)
             """,
             rows,
         )

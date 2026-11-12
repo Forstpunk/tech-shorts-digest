@@ -69,6 +69,17 @@ topics:
                focus, time management, note taking]
     advanced: [vba, lambda function, dynamic array, power pivot, dax]
 
+# General tech words. Not tied to a topic, so they don't affect scoring; discovery uses them
+# (together with all topic terms above) to drop off-topic search results, e.g. "dress code"
+# jokes found by "coding humor". Plain "code" is left out on purpose for that reason.
+tech_words: [coding, coder, coders, programmer, programmers, programming, developer, developers,
+             dev, devs, software, bug, bugs, debug, debugging, tech, computer, laptop, ai,
+             artificial intelligence, app, script, terminal, command line, keyboard, database,
+             server, website, frontend, backend, full stack, algorithm, data, spreadsheet,
+             cyber, hacker, it support, stack overflow, open source,
+             # language names (topic names like "python" are not terms themselves)
+             python, java, c++, c#, rust, golang, kotlin, swift, php, ruby, r programming]
+
 # Phrases that shape the usefulness score and the promo flag.
 signals:
   # Instructional language: someone is showing you how to do something.

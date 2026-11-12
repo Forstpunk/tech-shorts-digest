@@ -13,6 +13,7 @@ from shorts_digest.discovery import (
     Candidate,
     check_candidate,
     discover,
+    language_ok,
     mark_reposts,
     order_for,
     rank_and_cap,
@@ -170,7 +171,7 @@ def v(channel, views, duration="PT40S", title=None, ts="2026-11-11T10:00:00Z"):
         "views": views,
         "duration": duration,
         "publishedAt": ts,
-        "title": title or f"video from {channel[2]} with {views} views",
+        "title": title or f"Python trick from {channel[2]} with {views} views",
     }
 
 
@@ -327,3 +328,59 @@ def test_cli_discover_dry_run_prints_report_and_csv(cfg, monkeypatch, tmp_path, 
     assert cli.main(["discover", "--dry-run", "--max-searches", "2"]) == 0
     assert "KEPT (2)" in capsys.readouterr().out
     assert [p.name for p in (tmp_path / "output").iterdir()][0].endswith("-dryrun.csv")
+
+
+# --- topic and language filters ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "language, title, ok",
+    [
+        ("en", "anything", True),
+        ("en-US", "anything", True),
+        ("hi", "anything", True),
+        ("pl", "dress code marzę", False),  # tagged Polish
+        ("es-419", "Una IA hackea Linux", False),
+        ("zxx", "music only", True),
+        (None, "Python trick 🔥 #shorts", True),
+        (None, "Python seekho आसान तरीके से", True),  # Hinglish + Devanagari
+        (None, "Excel फॉर्मूला", True),
+        (None, "Pythonのコツ", False),  # Japanese script
+        (None, "Трюк в Excel", False),  # Cyrillic
+    ],
+)
+def test_language_ok(language, title, ok):
+    assert language_ok(language, title, ["en", "hi"]) is ok
+
+
+def test_off_topic_uses_terms_and_tech_words():
+    from shorts_digest.extract import load_vocabulary
+
+    vocab = load_vocabulary()
+    known = {SMALL}
+
+    def reason(title, description=""):
+        c = cand(title=title, description=description)
+        return check_candidate(c, D, 180, set(), {}, known, vocab)
+
+    assert reason("NEW FUNNY CRAFTLAND MAP IN FREE FIRE || CODE PIN COMMENT") == "off_topic"
+    assert reason("Nobody knows the dress code!") == "off_topic"
+    assert reason("He turned into a big python on AGT") is None  # "python" is a term
+    assert reason("Why fix the bug when you can simply HIDE it?") is None  # tech word
+    assert reason("Wait for it 😂", description="#coding #programmerlife") is None
+    assert reason("Ctrl+Z won't save you", description="") == "off_topic"  # needs a word
+    assert reason("Like WHATT #boss #worklife #vibecoding #codinghumour") is None  # stems
+    assert reason("Happy day #happy #devotional #daily") == "off_topic"  # no false stems
+
+
+def test_job_drops_off_topic_and_foreign_language(cfg, conn):
+    yt = make_yt()
+    yt.videos_data["freefire"] = v(SMALL, 90_000, title="Craftland map code pin 🔥")
+    yt.videos_data["polish"] = v(TINY, 90_000, title="Python sztuczka")
+    yt.videos_data["polish"]["defaultAudioLanguage"] = "pl"
+    yt.video_search["python trick"] = ["freefire", "polish"]
+    r = run(cfg, conn, yt, max_searches=1)
+    assert {c.video_id: c.drop_reason for c in r.candidates} == {
+        "freefire": "off_topic",
+        "polish": "wrong_language",
+    }

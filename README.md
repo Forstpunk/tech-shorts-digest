@@ -116,7 +116,9 @@ unusually well for their size, using a capped keyword search (`discovery:` in se
 2. **Enrich:** `videos.list` and `channels.list` in batches of 50 for views, duration,
    subscribers and uploads. Channel stats are cached for 7 days.
 3. **Filter:** every candidate is kept or gets a reason: `not_short`, `curated_channel`,
-   `channel_rejected` / `channel_blocked`, `subscribers_hidden`, `too_few_subscribers` /
+   `channel_rejected` / `channel_blocked`, `wrong_language` (English + Hindi/Hinglish by
+   default: YouTube's language tag, else the title's script), `off_topic` (no tech term from
+   `config/terms.yaml` in the title or description), `subscribers_hidden`, `too_few_subscribers` /
    `too_many_subscribers` (window 1,000–100,000), `too_few_uploads` (< 5), `too_few_views`
    (< 5,000), `low_views_per_subscriber` (< 2.0), `likely_repost` (same title as an earlier
    video from another channel; the earliest copy survives).

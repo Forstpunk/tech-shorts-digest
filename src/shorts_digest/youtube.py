@@ -67,6 +67,7 @@ class VideoDetails:
     published_at: str
     duration: str  # raw ISO 8601, e.g. "PT45S"
     views: int | None = None  # statistics.viewCount (None if hidden)
+    language: str | None = None  # defaultAudioLanguage, else defaultLanguage (often missing)
 
 
 def build_client(api_key: str) -> Any:
@@ -199,6 +200,7 @@ def fetch_video_details(client: Any, video_ids: list[str], quota: Quota) -> dict
                 published_at=snip.get("publishedAt", ""),
                 duration=item["contentDetails"].get("duration", ""),
                 views=_int_or_none(item.get("statistics", {}).get("viewCount")),
+                language=snip.get("defaultAudioLanguage") or snip.get("defaultLanguage"),
             )
     return result
 
